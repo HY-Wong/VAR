@@ -58,7 +58,7 @@ class VectorQuantizer2(nn.Module):
         f_rest = f_no_grad.clone()
         f_hat = torch.zeros_like(f_rest)
         
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', enabled=False):
             mean_vq_loss: torch.Tensor = 0.0
             vocab_hit_V = torch.zeros(self.vocab_size, dtype=torch.float, device=f_BChw.device)
             SN = len(self.v_patch_nums)
@@ -74,7 +74,10 @@ class VectorQuantizer2(nn.Module):
                     d_no_grad.addmm_(rest_NC, self.embedding.weight.data.T, alpha=-2, beta=1)  # (B*h*w, vocab_size)
                     idx_N = torch.argmin(d_no_grad, dim=1)
                 
+                # print('pn, idx_N', pn, idx_N.shape)
+                torch.use_deterministic_algorithms(False, warn_only=True)
                 hit_V = idx_N.bincount(minlength=self.vocab_size).float()
+                torch.use_deterministic_algorithms(True, warn_only=True)
                 if self.training:
                     if dist.initialized(): handler = tdist.all_reduce(hit_V, async_op=True)
                 
@@ -97,7 +100,7 @@ class VectorQuantizer2(nn.Module):
             mean_vq_loss *= 1. / SN
             f_hat = (f_hat.data - f_no_grad).add_(f_BChw)
         
-        margin = tdist.get_world_size() * (f_BChw.numel() / f_BChw.shape[1]) / self.vocab_size * 0.08
+        margin = dist.get_world_size() * (f_BChw.numel() / f_BChw.shape[1]) / self.vocab_size * 0.08
         # margin = pn*pn / 100
         if ret_usages: usages = [(self.ema_vocab_hit_SV[si] >= margin).float().mean().item() * 100 for si, pn in enumerate(self.v_patch_nums)]
         else: usages = None

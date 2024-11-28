@@ -4,6 +4,7 @@ import torch.nn as nn
 from .quant import VectorQuantizer2
 from .var import VAR
 from .vqvae import VQVAE
+from .vqvae_wav import VQVAE_WAV
 
 
 def build_vae_var(
@@ -37,3 +38,62 @@ def build_vae_var(
     var_wo_ddp.init_weights(init_adaln=init_adaln, init_adaln_gamma=init_adaln_gamma, init_head=init_head, init_std=init_std)
     
     return vae_local, var_wo_ddp
+
+
+def build_vae(
+    # Shared args
+    patch_nums=(1, 2, 3, 4, 5, 6, 7, 8),   # 8 steps by default
+    # VQVAE args
+    V=4096, Cvae=32, ch=160, share_quant_resi=4,
+    init_vae=-0.5, init_vocab=-1,
+    ch_mult=(1, 2, 2, 2), in_channels=21
+) -> VQVAE_WAV:
+    # disable built-in initialization for speed
+    for clz in (nn.Linear, nn.LayerNorm, nn.BatchNorm2d, nn.SyncBatchNorm, nn.Conv1d, nn.Conv2d, nn.ConvTranspose1d, nn.ConvTranspose2d):
+        setattr(clz, 'reset_parameters', lambda self: None)
+    
+    # build models
+    vae = VQVAE_WAV(
+        vocab_size=V, z_channels=Cvae, ch=ch, 
+        test_mode=False, share_quant_resi=share_quant_resi, 
+        v_patch_nums=patch_nums, ch_mult=ch_mult, in_channels=in_channels
+    )
+    
+    # init weights
+    need_init = [
+        vae.downsample_wav,
+        vae.upsample_wav,
+        vae.encoder,
+        vae.decoder,
+        vae.quant_conv,
+        vae.quantize,
+        vae.post_quant_conv
+    ]
+    for vv in need_init:
+        init_weights(vv, init_vae)
+    vae.quantize.eini(init_vocab)
+    
+    return vae
+
+
+def init_weights(model, conv_std_or_gain):
+    print(f'[init_weights] {type(model).__name__} with {"std" if conv_std_or_gain > 0 else "gain"}={abs(conv_std_or_gain):g}')
+    for m in model.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight.data, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias.data, 0.)
+        elif isinstance(m, nn.Embedding):
+            nn.init.trunc_normal_(m.weight.data, std=0.02)
+            if m.padding_idx is not None:
+                m.weight.data[m.padding_idx].zero_()
+        elif isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d)):
+            if conv_std_or_gain > 0:
+                nn.init.trunc_normal_(m.weight.data, std=conv_std_or_gain)
+            else:
+                nn.init.xavier_normal_(m.weight.data, gain=-conv_std_or_gain)
+            if hasattr(m, 'bias') and m.bias is not None:
+                nn.init.constant_(m.bias.data, 0.)
+        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.SyncBatchNorm, nn.GroupNorm, nn.InstanceNorm1d, nn.InstanceNorm2d, nn.InstanceNorm3d)):
+            if m.bias is not None: nn.init.constant_(m.bias.data, 0.)
+            if m.weight is not None: nn.init.constant_(m.weight.data, 1.)

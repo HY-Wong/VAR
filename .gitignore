@@ -12,9 +12,12 @@ log/
 tb*/
 img*/
 local_output*
+evaluations/
+wandb/
 *.pth
 *.pth.tar
 *.ckpt
 *.log
 *.txt
 *.ipynb
+*.png

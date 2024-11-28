@@ -28,6 +28,11 @@ class Args(Tap):
     
     # VAE
     vfast: int = 0      # torch.compile VAE; =0: not compile; 1: compile with 'reduce-overhead'; 2: compile with 'max-autotune'
+    # VAE initialization
+    init_vae: float = -0.5  # <0: xavier_normal_(gain=abs(init)); >0: trunc_normal_(std=init)
+    init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
+    # VAE optimization
+    beta: float = 10.0   # weight of the reconstruction loss
     # VAR
     tfast: int = 0      # torch.compile VAR; =0: not compile; 1: compile with 'reduce-overhead'; 2: compile with 'max-autotune'
     depth: int = 16     # VAR depth
@@ -45,12 +50,12 @@ class Args(Tap):
     tclip: float = 2.       # <=0 for not using grad clip
     ls: float = 0.0         # label smooth
     
-    bs: int = 768           # global batch size
+    bs: int = 64            # global batch size
     batch_size: int = 0     # [automatically set; don't specify this] batch size per GPU = round(args.bs / args.ac / dist.get_world_size() / 8) * 8
     glb_batch_size: int = 0 # [automatically set; don't specify this] global batch size = args.batch_size * dist.get_world_size()
     ac: int = 1             # gradient accumulation
     
-    ep: int = 250
+    ep: int = 50
     wp: float = 0
     wp0: float = 0.005      # initial lr ratio at the begging of lr warm up
     wpe: float = 0.01       # final lr ratio at the end of training
@@ -73,7 +78,7 @@ class Args(Tap):
     data_load_reso: int = None  # [automatically set; don't specify this] would be max(patch_nums) * patch_size
     mid_reso: float = 1.125     # aug: first resize to mid_reso = 1.125 * data_load_reso, then crop to data_load_reso
     hflip: bool = False         # augmentation: horizontal flip
-    workers: int = 0        # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
+    workers: int = 16           # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
     
     # progressive training
     pg: float = 0.0         # >0 for use progressive training during [0%, this] of training
@@ -106,6 +111,14 @@ class Args(Tap):
     tb_log_dir_path: str = '...tb-...'  # [automatically set; don't specify this]
     log_txt_path: str = '...'           # [automatically set; don't specify this]
     last_ckpt_path: str = '...'         # [automatically set; don't specify this]
+    gpus: int = None                    # [automatically set; don't specify this]
+    num_nodes: int = 1                  # number of nodes in a distributed setup
+    save_every_n_epochs: int = 1        # frequency of checkpoint saving
+    save_ckpt_dir: str = 'configs'    # directory for saving checkpoint
+    load_ckpt_path: str = None          # path to load checkpoint
+    wandb_project: str = 'vqvae'        # name of the project to which this run will belong
+    wandb_name: str = 'stage_1'         # name of the run
+    wandb_id: str = None                # run ID resuming logging of a model
     
     tf32: bool = True       # whether to use TensorFloat32
     device: str = 'cpu'     # [automatically set; don't specify this]
@@ -234,6 +247,7 @@ def init_dist_and_get_args():
     from utils import misc
     os.makedirs(args.local_out_dir_path, exist_ok=True)
     misc.init_distributed_mode(local_out_path=args.local_out_dir_path, timeout=30)
+    args.gpus = torch.cuda.device_count()
     
     # set env
     args.set_tf32(args.tf32)
@@ -252,12 +266,10 @@ def init_dist_and_get_args():
     args.data_load_reso = max(args.resos)
     
     # update args: bs and lr
-    bs_per_gpu = round(args.bs / args.ac / dist.get_world_size())
-    args.batch_size = bs_per_gpu
-    args.bs = args.glb_batch_size = args.batch_size * dist.get_world_size()
+    args.batch_size = args.bs // (args.num_nodes * args.gpus)
     args.workers = min(max(0, args.workers), args.batch_size)
     
-    args.tlr = args.ac * args.tblr * args.glb_batch_size / 256
+    args.tlr = args.ac * args.tblr * args.batch_size / 256
     args.twde = args.twde or args.twd
     
     if args.wp == 0:

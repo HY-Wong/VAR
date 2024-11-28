@@ -368,13 +368,15 @@ def create_npz_from_sample_folder(sample_folder: str):
     
     samples = []
     pngs = glob.glob(os.path.join(sample_folder, '*.png')) + glob.glob(os.path.join(sample_folder, '*.PNG'))
-    assert len(pngs) == 50_000, f'{len(pngs)} png files found in {sample_folder}, but expected 50,000'
+    # assert len(pngs) == 50_000, f'{len(pngs)} png files found in {sample_folder}, but expected 50,000'
+    assert len(pngs) == 5_000, f'{len(pngs)} png files found in {sample_folder}, but expected 5,000'
     for png in tqdm(pngs, desc='Building .npz file from samples (png only)'):
         with Image.open(png) as sample_pil:
             sample_np = np.asarray(sample_pil).astype(np.uint8)
         samples.append(sample_np)
     samples = np.stack(samples)
-    assert samples.shape == (50_000, samples.shape[1], samples.shape[2], 3)
+    # assert samples.shape == (50_000, samples.shape[1], samples.shape[2], 3)
+    assert samples.shape == (5_000, samples.shape[1], samples.shape[2], 3)
     npz_path = f'{sample_folder}.npz'
     np.savez(npz_path, arr_0=samples)
     print(f'Saved .npz file to {npz_path} [shape={samples.shape}].')

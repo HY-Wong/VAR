@@ -81,6 +81,7 @@ class AttnBlock(nn.Module):
         q = q.permute(0, 2, 1).contiguous()     # B,HW,C
         k = k.view(B, C, H * W).contiguous()    # B,C,HW
         w = torch.bmm(q, k).mul_(self.w_ratio)  # B,HW,HW    w[B,i,j]=sum_c q[B,i,C]k[B,C,j]
+
         w = F.softmax(w, dim=2)
         
         # attend to values
