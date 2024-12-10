@@ -1,24 +1,20 @@
 ## Dataset
 
-ImageNet(http://image-net.org/) dataset
-    <details>
-    <summary> assume the ImageNet is in `/path/to/imagenet`. It should be like this:</summary>
-
-    ```
-    /path/to/imagenet/:
-        train/:
-            n01440764: 
-                many_images.JPEG ...
-            n01443537:
-                many_images.JPEG ...
-        val/:
-            n01440764:
-                ILSVRC2012_val_00000293.JPEG ...
-            n01443537:
-                ILSVRC2012_val_00000236.JPEG ...
-    ```
+Assume the ImageNet is in `/path/to/imagenet`. It should be like this:</summary>
     
-    </details>
+```
+/path/to/imagenet/:
+    train/:
+        n01440764: 
+            many_images.JPEG ...
+        n01443537:
+            many_images.JPEG ...
+    val/:
+        n01440764:
+            ILSVRC2012_val_00000293.JPEG ...
+        n01443537:
+            ILSVRC2012_val_00000236.JPEG ...
+```
 
 ## Training Scripts
 
