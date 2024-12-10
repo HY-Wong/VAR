@@ -17,15 +17,18 @@ ImageNet(http://image-net.org/) dataset
             n01443537:
                 ILSVRC2012_val_00000236.JPEG ...
     ```
-
+    
     </details>
 
 ## Training Scripts
 
+Creating wavelet dataset (takes some time to run):
+
 ```shell
 python3 wavelet.py --dataset_dir=/path/to/imagenet
 ```
-Takes some time to run.
+
+Training:
 
 ```shell
 CUDA_VISIBLE_DEVICES=0,1 python3 train_wav.py --data_path=/path/to/wavelet --bs 384 --wandb_name=stage_1_vqvae_wav
