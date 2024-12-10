@@ -12,10 +12,9 @@ from PIL import Image
 
 
 class VQVAE_WAV_Trainer(pl.LightningModule):
-    def __init__(self, vae, lpips, args, steps_per_epoch):
+    def __init__(self, vae, args, steps_per_epoch):
         super().__init__()
         self.model = vae
-        self.lpips = lpips
         self.args = args
         self.steps_per_epoch = steps_per_epoch
 
@@ -30,70 +29,32 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         (l1_hs, l2_hs, ll), label = batch
-        rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss = self(l1_hs, l2_hs, ll)
+        rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss, lpips_loss = self(l1_hs, l2_hs, ll)
         
         # compound loss
         rec_loss = self.loss_fn(rec_l1_hs, l1_hs) + self.loss_fn(rec_l2_hs, l2_hs) + self.loss_fn(rec_ll, ll)
-        '''
-        lpips_low_loss = self.lpips(rec_ll, ll)
-        lpips_loss = self.args.lp_low * torch.mean(lpips_low_loss)
-
-        if self.args.lp_high > 0:
-            lpips_high_loss = 0
-
-            # level 1
-            lpips_high_loss += self.lpips(rec_l1_hs[:, :3], l1_hs[:, :3])   # LH
-            lpips_high_loss += self.lpips(rec_l1_hs[:, 3:6], l1_hs[:, 3:6]) # HL
-            lpips_high_loss += self.lpips(rec_l1_hs[:, 6:], l1_hs[:, 6:])   # HH
-            # level 2
-            lpips_high_loss += self.lpips(rec_l2_hs[:, :3], l2_hs[:, :3])   # LH
-            lpips_high_loss += self.lpips(rec_l2_hs[:, 3:6], l2_hs[:, 3:6]) # HL
-            lpips_high_loss += self.lpips(rec_l2_hs[:, 6:], l2_hs[:, 6:])   # HH
-            
-            lpips_loss += self.args.lp_high * torch.mean(lpips_high_loss)
-        '''
-        lpips_loss = 0
-        loss = rec_loss + self.args.lc * vq_loss + lpips_loss
+        loss = rec_loss + self.args.lc * vq_loss + self.args.lp * lpips_loss
         
         # log
         self.log('train_loss', loss, sync_dist=True)
         self.log('train_rec_loss', rec_loss, sync_dist=True)
         self.log('train_vq_loss', self.args.lc * vq_loss, sync_dist=True)
-        self.log('train_lpips_loss', lpips_loss, sync_dist=True)
+        self.log('train_lpips_loss', self.args.lp * lpips_loss, sync_dist=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
         (l1_hs, l2_hs, ll), label = batch
-        rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss = self(l1_hs, l2_hs, ll)
+        rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss, lpips_loss = self(l1_hs, l2_hs, ll)
         
         # compound loss
         rec_loss = self.loss_fn(rec_l1_hs, l1_hs) + self.loss_fn(rec_l2_hs, l2_hs) + self.loss_fn(rec_ll, ll)
-        '''
-        lpips_low_loss = self.lpips(rec_ll, ll)
-        lpips_loss = self.args.lp_low * torch.mean(lpips_low_loss)
-
-        if self.args.lp_high > 0:
-            lpips_high_loss = 0
-
-            # level 1
-            lpips_high_loss += self.lpips(rec_l1_hs[:, :3], l1_hs[:, :3])   # LH
-            lpips_high_loss += self.lpips(rec_l1_hs[:, 3:6], l1_hs[:, 3:6]) # HL
-            lpips_high_loss += self.lpips(rec_l1_hs[:, 6:], l1_hs[:, 6:])   # HH
-            # level 2
-            lpips_high_loss += self.lpips(rec_l2_hs[:, :3], l2_hs[:, :3])   # LH
-            lpips_high_loss += self.lpips(rec_l2_hs[:, 3:6], l2_hs[:, 3:6]) # HL
-            lpips_high_loss += self.lpips(rec_l2_hs[:, 6:], l2_hs[:, 6:])   # HH
-            
-            lpips_loss += self.args.lp_high * torch.mean(lpips_high_loss)
-        '''
-        lpips_loss = 0
-        loss = rec_loss + self.args.lc * vq_loss + lpips_loss
+        loss = rec_loss + self.args.lc * vq_loss + self.args.lp * lpips_loss
         
         # log
         self.log('val_loss', loss, sync_dist=True)
         self.log('val_rec_loss', rec_loss, sync_dist=True)
         self.log('val_vq_loss', self.args.lc * vq_loss, sync_dist=True)
-        self.log('val_lpips_loss', lpips_loss, sync_dist=True)
+        self.log('val_lpips_loss', self.args.lp * lpips_loss, sync_dist=True)
 
         if batch_idx == 0: # only plot one batch
             self.coeffs = (l1_hs, l2_hs, ll)
@@ -112,36 +73,17 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         (l1_hs, l2_hs, ll), label = batch
-        rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss = self(l1_hs, l2_hs, ll)
+        rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss, lpips_loss = self(l1_hs, l2_hs, ll)
         
         # compound loss
         rec_loss = self.loss_fn(rec_l1_hs, l1_hs) + self.loss_fn(rec_l2_hs, l2_hs) + self.loss_fn(rec_ll, ll)
-        '''
-        lpips_low_loss = self.lpips(rec_ll, ll)
-        lpips_loss = self.args.lp_low * torch.mean(lpips_low_loss)
-
-        if self.args.lp_high > 0:
-            lpips_high_loss = 0
-
-            # level 1
-            lpips_high_loss += self.lpips(rec_l1_hs[:, :3], l1_hs[:, :3])   # LH
-            lpips_high_loss += self.lpips(rec_l1_hs[:, 3:6], l1_hs[:, 3:6]) # HL
-            lpips_high_loss += self.lpips(rec_l1_hs[:, 6:], l1_hs[:, 6:])   # HH
-            # level 2
-            lpips_high_loss += self.lpips(rec_l2_hs[:, :3], l2_hs[:, :3])   # LH
-            lpips_high_loss += self.lpips(rec_l2_hs[:, 3:6], l2_hs[:, 3:6]) # HL
-            lpips_high_loss += self.lpips(rec_l2_hs[:, 6:], l2_hs[:, 6:])   # HH
-            
-            lpips_loss += self.args.lp_high * torch.mean(lpips_high_loss)
-        '''
-        lpips_loss = 0
-        loss = rec_loss + self.args.lc * vq_loss + lpips_loss
+        loss = rec_loss + self.args.lc * vq_loss + self.args.lp * lpips_loss
         
         # log
         self.log('test_loss', loss, sync_dist=True)
         self.log('test_rec_loss', rec_loss, sync_dist=True)
         self.log('test_vq_loss', self.args.lc * vq_loss, sync_dist=True)
-        self.log('test_lpips_loss', lpips_loss, sync_dist=True)
+        self.log('test_lpips_loss', self.args.lp * lpips_loss, sync_dist=True)
 
         # plot five batches
         imgs = self.get_images_from_wavelet(l1_hs, l2_hs, ll)
@@ -183,16 +125,12 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         return optimizer_dict
     
     def on_after_backward(self):
-        # specify a very high value for max_norm to avoid actual clipping if undesired
-        max_norm = self.args.max_norm
-        total_norm = clip_grad_norm_(self.model.parameters(), max_norm=max_norm)
+        total_norm = clip_grad_norm_(self.model.parameters(), max_norm=self.args.max_norm)
         self.log('gradients_norm', total_norm)
 
-    def get_images_from_wavelet(
-        self, l1_hs: torch.Tensor, l2_hs: torch.Tensor, ll: torch.Tensor
-    ) -> Image.Image:
+    def get_images_from_wavelet(self, l1_hs: torch.Tensor, l2_hs: torch.Tensor, ll: torch.Tensor) -> Image.Image:
         """
-        Reconstructs and visualizes images from multi-level wavelet components.
+        Reconstructs and visualizes images from multi-level wavelet components
         """
         imgs = []
         # mean and std of Imagenet
@@ -222,7 +160,7 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         self, highs: List[np.ndarray], low: np.ndarray, wavelet: str, mode: str = 'periodization'
     ) -> np.ndarray:
         """
-        Reconstruct a 2D signal channel-wise using multi-level wavelet coefficients.
+        Reconstruct a 2D signal channel-wise using multi-level wavelet coefficients
         """
         reconstructed_channels = []
         for c in range(low.shape[0]):

@@ -10,7 +10,6 @@ from trainer_wav import VQVAE_WAV_Trainer
 from models import build_vae
 from utils import arg_util
 from utils.data_wav import WaveletDataModule
-from utils.lpips import LPIPS
 
 
 if __name__ == '__main__':
@@ -66,18 +65,14 @@ if __name__ == '__main__':
     #     init_vae=args.init_vae, init_vocab=args.init_vocab,
     #     ch_mult=(1, 1, 2, 2, 4), in_channels=48
     # )
-    # perceptual loss
-    lpips = LPIPS(ckpt_path='vgg16_lpips.pth').eval()
 
     if resume:
         model = VQVAE_WAV_Trainer.load_from_checkpoint(
-            args.load_ckpt_path, vae=vae, lpips=lpips, args=args, steps_per_epoch=len(train_loader)
+            args.load_ckpt_path, vae=vae, args=args, steps_per_epoch=len(train_loader)
         )
         print(f'[INFO] Loaded from {args.load_ckpt_path}')
     else:
-        model = VQVAE_WAV_Trainer(
-            vae=vae, lpips=lpips, args=args, steps_per_epoch=len(train_loader)
-        )
+        model = VQVAE_WAV_Trainer(vae=vae, args=args, steps_per_epoch=len(train_loader))
     
     # callbacks
     checkpoint_callback = ModelCheckpoint(

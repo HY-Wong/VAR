@@ -68,7 +68,8 @@ def build_vae(
         vae.decoder,
         vae.quant_conv,
         vae.quantize,
-        vae.post_quant_conv
+        vae.post_quant_conv,
+        vae.lpips
     ]
     for vv in need_init:
         init_weights(vv, init_vae)

@@ -1,15 +1,19 @@
+import argparse
 import os
 import numpy as np
-import h5py
+import torch
 import pywt
 import matplotlib.pyplot as plt
+
 from torchvision import transforms
 from PIL import Image
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 
 def decompose_multilevel_2d(image, wavelet, mode='periodization', level=2):
     """
-    Perform 2D wavelet decomposition with the specified level.
+    Perform 2D wavelet decomposition with the specified level
     """
     channels = []
     # for each color channel
@@ -31,8 +35,9 @@ def visualize_wavelet_components(ll, lh, hl, hh, level):
     plt.figure(figsize=(10, 10))
     for i, (comp, title) in enumerate(zip(components, titles)):
         comp = np.transpose(comp, (1, 2, 0))
+        comp = (comp - comp.min()) / (comp.max() - comp.min())  # normalize to [0, 1]
         plt.subplot(2, 2, i + 1)
-        plt.imshow(comp / comp.max())  # normalize for better visualization
+        plt.imshow(comp)
         plt.title(title)
         plt.axis('off')
     
@@ -40,59 +45,91 @@ def visualize_wavelet_components(ll, lh, hl, hh, level):
     plt.savefig(f'coeffs-level-{level}.png')
 
 
-dataset_dir = '../datasets/imagenet-100'
-output_dir = '../datasets/imagenet-100-wavelet'
-os.makedirs(output_dir, exist_ok=True)
+def process_images_in_class(class_id, split, dataset_dir, output_dir, decomposition_level=2):
+    """
+    Process images in a specific class folder and save the results
+    """
+    # transform image to (256, 256)
+    final_reso = 256
+    mid_reso = round(1.125 * final_reso)
 
-# transform image to (256, 256)
-final_reso = 256
-mid_reso = round(1.125 * final_reso)
+    transform = transforms.Compose([
+        transforms.Resize(mid_reso, interpolation=transforms.InterpolationMode.LANCZOS),
+        transforms.CenterCrop((final_reso, final_reso)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-transform = transforms.Compose([
-    transforms.Resize(mid_reso, interpolation=transforms.InterpolationMode.LANCZOS),
-    transforms.CenterCrop((final_reso, final_reso)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
-
-for split in ['train' , 'val']:
-    split_path = os.path.join(dataset_dir, split)
-    output_path = os.path.join(output_dir)
+    class_path = os.path.join(dataset_dir, split, class_id)
+    output_path = os.path.join(output_dir, split, class_id)
     os.makedirs(output_path, exist_ok=True)
 
-    hdf5_file = os.path.join(output_path, f'{split}.h5')
-    with h5py.File(hdf5_file, 'w') as h5f: 
-        for class_id in os.listdir(split_path):
-            class_path = os.path.join(split_path, class_id)
-            if not os.path.isdir(class_path):
-                continue
-            
-            # process each image in the class folder
-            print(f'Processing {class_path}')
+    print(f'Processing {class_path}')
 
-            for img_name in os.listdir(class_path):
-                if img_name.endswith('.JPEG'):
-                    img_path = os.path.join(class_path, img_name)
-                    img = Image.open(img_path).convert('RGB')
-                    img = transform(img)
-                    img_np = np.array(img, dtype=np.float32)
-                    # perform wavelet decomposition
-                    decomposition_level = 2
-                    subbands = decompose_multilevel_2d(img_np, wavelet='haar', level=decomposition_level)
-                    
-                    grp = h5f.create_group(f'{class_id}/{img_name}')
+    for img_name in os.listdir(class_path):
+        if img_name.endswith('.JPEG') or img_name.endswith('.png'):
+            img_path = os.path.join(class_path, img_name)
+            img = Image.open(img_path).convert('RGB')
+            img = transform(img)
+            img_np = np.array(img, dtype=np.float32)
 
-                    for level in range(decomposition_level):
-                        ll = np.stack([sb[level][0] for sb in subbands], axis=0)
-                        lh = np.stack([sb[level][1][0] for sb in subbands], axis=0)
-                        hl = np.stack([sb[level][1][1] for sb in subbands], axis=0)
-                        hh = np.stack([sb[level][1][2] for sb in subbands], axis=0)
-                        coeffs = np.concatenate([ll, lh, hl, hh], axis=0)
-                        # print(ll.shape)
-                        # print(lh.shape)
-                        # print(hl.shape)
-                        # print(hh.shape)
-                        # print(coeffs.shape)
-                        # visualize_wavelet_components(ll, lh, hl, hh, level+1)
+            # perform wavelet decomposition
+            subbands = decompose_multilevel_2d(img_np, wavelet='haar', level=decomposition_level)
 
-                        grp.create_dataset(f'level-{level+1}', data=coeffs, compression='gzip') # (LL, LH, HL, HH)
+            ll = np.stack([sb[1][0] for sb in subbands], axis=0)
+            data = {'ll': torch.tensor(ll)}
+            for level in range(decomposition_level):
+                lh = np.stack([sb[level][1][0] for sb in subbands], axis=0)
+                hl = np.stack([sb[level][1][1] for sb in subbands], axis=0)
+                hh = np.stack([sb[level][1][2] for sb in subbands], axis=0)
+                hs = np.concatenate([lh, hl, hh], axis=0)
+                data[f'l{level+1}_hs'] = torch.tensor(hs)
+
+            img_id = img_name.split('.')[0]
+            pt_path = os.path.join(output_path, f'{img_id}.pt')
+            torch.save(data, pt_path)
+
+
+def process_split(split, dataset_dir, output_dir, decomposition_level=2):
+    """
+    Process a specific data split (train/val) in parallel
+    """
+    split_path = os.path.join(dataset_dir, split)
+    class_ids = [cid for cid in os.listdir(split_path) if os.path.isdir(os.path.join(split_path, cid))]
+
+    # use multiprocessing pool to parallelize the processing
+    pool = Pool(processes=10) 
+    worker = partial(
+        process_images_in_class,
+        split=split,
+        dataset_dir=dataset_dir,
+        output_dir=output_dir,
+        decomposition_level=decomposition_level
+    )
+    pool.map(worker, class_ids)  # distribute `class_ids` among processes
+    pool.close()
+    pool.join()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Compute and store wavelet coefficients from image dataset.')
+    parser.add_argument(
+        '--dataset_dir', type=str,
+        default='/path/to/imagenet', help='Path to the input image data directory.'
+    )
+    parser.add_argument(
+        '--output_dir', type=str,
+        default=None, help='Path to the output data directory.'
+    )
+
+    # parse arguments
+    args = parser.parse_args()
+
+    if args.dataset_dir == '/path/to/imagenet':
+        raise ValueError(f'{"*"*20}  please specify --dataset_dir=/path/to/imagenet  {"*"*20}')
+    if args.output_dir is None:
+        args.output_dir = args.dataset_dir + '-wavelet'
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    for split in ['train', 'val']:
+        process_split(split, args.dataset_dir, args.output_dir, decomposition_level=2)

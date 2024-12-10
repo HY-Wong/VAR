@@ -33,8 +33,7 @@ class Args(Tap):
     init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
     # VAE optimization
     lc: float = 10.0            # weight of the commitment loss
-    lp_low: float = 5.0         # weight of the perceptual loss for the low band
-    lp_high: float = -1.0       # weight of the perceptual loss for the high bands
+    lp: float = 5.0             # weight of the perceptual loss
     loss_fn: str = 'l2'         # L1 loss or L2 loss
 
     vae_blr: float = 3e-4       # base lr
