@@ -10,6 +10,7 @@ from trainer_wav import VQVAE_WAV_Trainer
 from models import build_vae
 from utils import arg_util
 from utils.data_wav import WaveletDataModule
+from utils.lpips import LPIPS
 
 
 if __name__ == '__main__':
@@ -22,8 +23,7 @@ if __name__ == '__main__':
     print(f'[INFO] Number of GPUs available: {gpus}')
     print(f'[INFO] Number of nodes: {num_nodes}')
     
-    seed = args.seed if args.seed else 0
-    pl.seed_everything(seed, workers=True)
+    pl.seed_everything(args.seed, workers=True)
 
     # logging, checkpointing and resuming
     save_ckpt_dir = f'{args.save_ckpt_dir}/{args.wandb_name}'
@@ -51,27 +51,40 @@ if __name__ == '__main__':
     print(f'[INFO] Batch lows shape: {ll.shape}')
     print(f'[INFO] Batch label shape: {label.shape}')
     print(f'[INFO] Cumulative batch size: {args.bs}')
-    print(f'[INFO] Final learning rate: {args.tlr}')
+    print(f'[INFO] Final learning rate: {args.vae_lr}')
 
     # build the model
     vae = build_vae(
         patch_nums=(1, 2, 3, 4, 5, 6, 7, 8),
-        V=4096, Cvae=128, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+        V=4096, Cvae=256, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         init_vae=args.init_vae, init_vocab=args.init_vocab,
-        ch_mult=(1, 2, 2, 2), in_channels=21
+        ch_mult=(1, 2, 2, 2), in_channels=48
     )
+    # vae = build_vae(
+    #     patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
+    #     V=4096, Cvae=256, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+    #     init_vae=args.init_vae, init_vocab=args.init_vocab,
+    #     ch_mult=(1, 1, 2, 2, 4), in_channels=48
+    # )
+    # perceptual loss
+    lpips = LPIPS(ckpt_path='vgg16_lpips.pth').eval()
+
     if resume:
-        model = VQVAE_WAV_Trainer.load_from_checkpoint(args.load_ckpt_path, vae=vae, args=args)
+        model = VQVAE_WAV_Trainer.load_from_checkpoint(
+            args.load_ckpt_path, vae=vae, lpips=lpips, args=args, steps_per_epoch=len(train_loader)
+        )
         print(f'[INFO] Loaded from {args.load_ckpt_path}')
     else:
-        model = VQVAE_WAV_Trainer(vae=vae, args=args)
+        model = VQVAE_WAV_Trainer(
+            vae=vae, lpips=lpips, args=args, steps_per_epoch=len(train_loader)
+        )
     
     # callbacks
     checkpoint_callback = ModelCheckpoint(
         dirpath=save_ckpt_dir, 
         filename='{epoch:03d}', 
         save_last=True, # save the latest
-        save_top_k=1, monitor='val_loss',  mode='min', # save the best based on val_loss
+        save_top_k=1, monitor='val_rec_loss',  mode='min', # save the best based on val_rec_loss
         every_n_epochs=args.save_every_n_epochs
     )
     callbacks = [LearningRateMonitor(), checkpoint_callback]
@@ -89,6 +102,3 @@ if __name__ == '__main__':
 
     # test the model
     trainer.test(model, data_module)
-
-    # ensure wandb has stopped logging
-    wandb.finish()

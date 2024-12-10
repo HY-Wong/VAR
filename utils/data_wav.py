@@ -66,15 +66,16 @@ def pil_loader(path):
 
 
 class ImageDataModule(pl.LightningDataModule):
-    def __init__(self, args, train_aug=None, val_aug=None):
+    def __init__(self, args, image_path: str, train_aug=None, val_aug=None):
         super().__init__()
         self.args = args
+        self.image_path = image_path
         self.train_aug = train_aug
         self.val_aug = val_aug
 
     def train_dataloader(self):
         train_set = DatasetFolder(
-            root=os.path.join('../datasets/imagenet-100', 'train'),
+            root=os.path.join(self.image_path, 'train'),
             loader=pil_loader,
             extensions=IMG_EXTENSIONS,
             transform=self.train_aug
@@ -87,7 +88,7 @@ class ImageDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         val_set = DatasetFolder(
-            root=os.path.join('../datasets/imagenet-100', 'val'),
+            root=os.path.join(self.image_path, 'val'),
             loader=pil_loader,
             extensions=IMG_EXTENSIONS,
             transform=self.val_aug
@@ -100,7 +101,7 @@ class ImageDataModule(pl.LightningDataModule):
     
     def test_dataloader(self):
         test_set = DatasetFolder(
-            root=os.path.join('../datasets/imagenet-100', 'val'),
+            root=os.path.join(self.image_path, 'val'),
             loader=pil_loader,
             extensions=IMG_EXTENSIONS,
             transform=self.val_aug

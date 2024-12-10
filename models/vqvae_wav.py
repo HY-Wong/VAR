@@ -37,8 +37,8 @@ class VQVAE_WAV(nn.Module):
             using_sa=True, using_mid_sa=True,                             # from vq-f16/config.yaml above
         )
         ddconfig.pop('double_z', None) # only KL-VAE should use double_z=True
-        self.downsample_wav = Downsample2x(in_channels=9) # (9, 128, 128) -> (9, 64, 64)
-        self.upsample_wav = Upsample2x(in_channels=9) # (9, 64, 64) -> (9, 128, 128)
+        self.downsample_wav = Downsample2x(in_channels=9, out_channels=9*4) # (9, 128, 128) -> (36, 64, 64)
+        self.upsample_wav = Upsample2x(in_channels=9*4, out_channels=9) # (36, 64, 64) -> (9, 128, 128)
         self.encoder = Encoder(double_z=False, **ddconfig)
         self.decoder = Decoder(**ddconfig)
         
@@ -61,12 +61,15 @@ class VQVAE_WAV(nn.Module):
         inp = torch.cat([l1_hs, l2_hs, ll], dim=1)
         VectorQuantizer2.forward
         f = self.encoder(inp)
+        # print(f'[SHAPE] Input: {inp.shape}')
         # print(f'[SHAPE] Encoder features: {f.shape}')
         f_hat, usages, vq_loss = self.quantize(self.quant_conv(f), ret_usages=ret_usages)
-        # print(f'[SHAPE] Decoder features: {f_hat.shape}')
         rec_inp = self.decoder(self.post_quant_conv(f_hat))
-        rec_l1_hs, rec_l2_hs, rec_ll = rec_inp[:, :9, :, :], rec_inp[:, 9:18, :, :], rec_inp[:, 18:, :, :]
+        # print(f'[SHAPE] Reconstructed input: {rec_inp.shape}')
+        # print(f'[SHAPE] Decoder features: {f_hat.shape}')
+        rec_l1_hs, rec_l2_hs, rec_ll = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
         rec_l1_hs = self.upsample_wav(rec_l1_hs)
+        # print(f'[SHAPE] Reconstructed level-1 highs: {rec_l1_hs.shape}')
         return rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss
     # ===================== `forward` is only used in VAE training =====================
     

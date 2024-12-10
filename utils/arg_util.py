@@ -32,7 +32,21 @@ class Args(Tap):
     init_vae: float = -0.5  # <0: xavier_normal_(gain=abs(init)); >0: trunc_normal_(std=init)
     init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
     # VAE optimization
-    beta: float = 10.0   # weight of the reconstruction loss
+    lc: float = 10.0            # weight of the commitment loss
+    lp_low: float = 5.0         # weight of the perceptual loss for the low band
+    lp_high: float = -1.0       # weight of the perceptual loss for the high bands
+    loss_fn: str = 'l2'         # L1 loss or L2 loss
+
+    vae_blr: float = 3e-4       # base lr
+    vae_lr: float = None        # lr = base lr
+    opt_beta: str = '0.5_0.9'   # Betas for the AdamW optimizer
+    opt_fuse: bool = True       # whether to use fused optimizer
+    max_norm: float = 10.0      # gradient clipping (gradient norm)
+
+    vae_wp_ep: int = None       # lr warmup epochs: set to round(ep * 0.01) by default
+    vae_wp_lr: float = 0.005    # lr warmup ratio: initial lr = lr * vae_wp_lr
+    vae_final_lr: float = 0.1   # lr schedule ratio: final lr = lr * vae_final_lr
+
     # VAR
     tfast: int = 0      # torch.compile VAR; =0: not compile; 1: compile with 'reduce-overhead'; 2: compile with 'max-autotune'
     depth: int = 16     # VAR depth
@@ -55,7 +69,7 @@ class Args(Tap):
     glb_batch_size: int = 0 # [automatically set; don't specify this] global batch size = args.batch_size * dist.get_world_size()
     ac: int = 1             # gradient accumulation
     
-    ep: int = 50
+    ep: int = 250
     wp: float = 0
     wp0: float = 0.005      # initial lr ratio at the begging of lr warm up
     wpe: float = 0.01       # final lr ratio at the end of training
@@ -78,7 +92,7 @@ class Args(Tap):
     data_load_reso: int = None  # [automatically set; don't specify this] would be max(patch_nums) * patch_size
     mid_reso: float = 1.125     # aug: first resize to mid_reso = 1.125 * data_load_reso, then crop to data_load_reso
     hflip: bool = False         # augmentation: horizontal flip
-    workers: int = 16           # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
+    workers: int = 32           # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
     
     # progressive training
     pg: float = 0.0         # >0 for use progressive training during [0%, this] of training
@@ -122,7 +136,7 @@ class Args(Tap):
     
     tf32: bool = True       # whether to use TensorFloat32
     device: str = 'cpu'     # [automatically set; don't specify this]
-    seed: int = None        # seed
+    seed: int = 42          # seed
     def seed_everything(self, benchmark: bool):
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark = benchmark
@@ -269,9 +283,12 @@ def init_dist_and_get_args():
     args.batch_size = args.bs // (args.num_nodes * args.gpus)
     args.workers = min(max(0, args.workers), args.batch_size)
     
+    args.vae_lr = args.ac * args.vae_blr
     args.tlr = args.ac * args.tblr * args.batch_size / 256
     args.twde = args.twde or args.twd
     
+    if args.vae_wp_ep is None:
+        args.vae_wp_ep = max(2, round(args.ep * 0.01))
     if args.wp == 0:
         args.wp = args.ep * 1/50
     

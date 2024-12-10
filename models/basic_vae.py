@@ -20,18 +20,18 @@ def Normalize(in_channels, num_groups=32):
 
 
 class Upsample2x(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv = torch.nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
     
     def forward(self, x):
         return self.conv(F.interpolate(x, scale_factor=2, mode='nearest'))
 
 
 class Downsample2x(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv = torch.nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=2, padding=0)
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=0)
     
     def forward(self, x):
         return self.conv(F.pad(x, pad=(0, 1, 0, 1), mode='constant', value=0))
@@ -129,7 +129,7 @@ class Encoder(nn.Module):
             down.block = block
             down.attn = attn
             if i_level != self.num_resolutions - 1:
-                down.downsample = Downsample2x(block_in)
+                down.downsample = Downsample2x(block_in, block_in)
             self.down.append(down)
         
         # middle
@@ -201,7 +201,7 @@ class Decoder(nn.Module):
             up.block = block
             up.attn = attn
             if i_level != 0:
-                up.upsample = Upsample2x(block_in)
+                up.upsample = Upsample2x(block_in, block_in)
             self.up.insert(0, up)  # prepend to get consistent order
         
         # end
