@@ -4,6 +4,7 @@
 import torch
 import torch.nn as nn
 
+from torch.nn import functional as F
 from torchvision import models
 from collections import namedtuple
 
@@ -40,17 +41,16 @@ class LPIPS(nn.Module):
         # in0_input, in1_input = (self.scaling_layer(input), self.scaling_layer(target))
         in0_input, in1_input = input, target
         outs0, outs1 = self.net(in0_input), self.net(in1_input)
-        feats0, feats1, diffs = {}, {}, {}
         lins = [self.lin0, self.lin1, self.lin2, self.lin3, self.lin4]
+        loss = 0.0
+        # print(f'[INFO] Input L2: {F.mse_loss(in0_input, in1_input):.6f}')
         for kk in range(len(self.chns)):
-            feats0[kk], feats1[kk] = normalize_tensor(outs0[kk]), normalize_tensor(outs1[kk])
-            diffs[kk] = (feats0[kk] - feats1[kk]) ** 2
-
-        res = [spatial_average(lins[kk].model(diffs[kk]), keepdim=True) for kk in range(len(self.chns))]
-        val = res[0]
-        for l in range(1, len(self.chns)):
-            val += res[l]
-        return val
+            feats0, feats1 = normalize_tensor(outs0[kk]), normalize_tensor(outs1[kk])
+            feats0, feats1 = lins[kk].model(feats0), lins[kk].model(feats1)
+            # print(f'[SHAPE] Features: {feats0.shape}')
+            # print(f'[INFO] Feature-{kk} L2: {F.mse_loss(feats0, feats1):.6f}')
+            loss += F.mse_loss(feats0, feats1)
+        return loss
 
 
 class ScalingLayer(nn.Module):

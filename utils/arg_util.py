@@ -32,20 +32,34 @@ class Args(Tap):
     init_vae: float = -0.5  # <0: xavier_normal_(gain=abs(init)); >0: trunc_normal_(std=init)
     init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
     # VAE optimization
-    lc: float = 10.0            # weight of the commitment loss
+    lc: float = 1.0             # weight of the commitment loss
     lp: float = 5.0             # weight of the perceptual loss
-    loss_fn: str = 'l2'         # L1 loss or L2 loss
+    ld: float = 1.0             # weight of the discriminator loss
+    loss_fn: str = 'l1'         # L1 loss or L2 loss
 
-    vae_blr: float = 3e-4       # base lr
-    vae_lr: float = None        # lr = base lr
+    vae_blr: float = 1e-4       # base lr
+    vae_lr: float = None        # lr = base lr * (bs / 256)
     opt_beta: str = '0.5_0.9'   # Betas for the AdamW optimizer
     opt_fuse: bool = True       # whether to use fused optimizer
     max_norm: float = 10.0      # gradient clipping (gradient norm)
 
     vae_wp_ep: int = None       # lr warmup epochs: set to round(ep * 0.01) by default
     vae_wp_lr: float = 0.005    # lr warmup ratio: initial lr = lr * vae_wp_lr
-    vae_final_lr: float = 0.1   # lr schedule ratio: final lr = lr * vae_final_lr
+    vae_final_lr: float = 0.01  # lr schedule ratio: final lr = lr * vae_final_lr
 
+    # Discriminator
+    n_layers: int = 3           # n-layered discriminator
+    out_channels: int = 256     #### 
+
+    disc_blr: float = 1e-4      # base lr
+    disc_lr: float = None       # lr = base lr * (bs / 256)
+    
+    disc_wp_ep: int = None      # lr warmup epochs: set to round(ep * 0.02) by default
+    disc_wp_lr: float = 0.005   # lr warmup ratio: initial lr = lr * disc_wp_lr
+    disc_final_lr: float = 0.01 # lr schedule ratio: final lr = lr * disc_final_lr
+
+    disc_start_ep: int = None   # start epochs: set to round(ep * 0.2) by default
+    
     # VAR
     tfast: int = 0      # torch.compile VAR; =0: not compile; 1: compile with 'reduce-overhead'; 2: compile with 'max-autotune'
     depth: int = 16     # VAR depth
@@ -83,11 +97,14 @@ class Args(Tap):
     fuse: bool = True       # whether to use fused op like flash attn, xformers, fused MLP, fused LayerNorm, etc.
     
     # data
-    pn: str = '1_2_3_4_5_6_8_10_13_16'
+    pn: str = '1_2_3_4_5_6_7_8'
     patch_size: int = 16
+    ch: str = '1_2_2_2'
+    in_channels: int = 48
     patch_nums: tuple = None    # [automatically set; don't specify this] = tuple(map(int, args.pn.replace('-', '_').split('_')))
+    ch_mult: tuple = None       # [automatically set; don't specify this] = tuple(map(int, args.ch.replace('-', '_').split('_')))
     resos: tuple = None         # [automatically set; don't specify this] = tuple(pn * args.patch_size for pn in args.patch_nums)
-    
+
     data_load_reso: int = None  # [automatically set; don't specify this] would be max(patch_nums) * patch_size
     mid_reso: float = 1.125     # aug: first resize to mid_reso = 1.125 * data_load_reso, then crop to data_load_reso
     hflip: bool = False         # augmentation: horizontal flip
@@ -275,6 +292,7 @@ def init_dist_and_get_args():
     elif args.pn == '1024':
         args.pn = '1_2_3_4_5_7_9_12_16_21_27_36_48_64'
     args.patch_nums = tuple(map(int, args.pn.replace('-', '_').split('_')))
+    args.ch_mult = tuple(map(int, args.ch.replace('-', '_').split('_')))
     args.resos = tuple(pn * args.patch_size for pn in args.patch_nums)
     args.data_load_reso = max(args.resos)
     
@@ -282,14 +300,19 @@ def init_dist_and_get_args():
     args.batch_size = args.bs // (args.num_nodes * args.gpus)
     args.workers = min(max(0, args.workers), args.batch_size)
     
-    args.vae_lr = args.ac * args.vae_blr
+    args.vae_lr = args.ac * args.vae_blr * args.batch_size / 256
+    args.disc_lr = args.ac * args.disc_blr * args.batch_size / 256
     args.tlr = args.ac * args.tblr * args.batch_size / 256
     args.twde = args.twde or args.twd
     
     if args.vae_wp_ep is None:
         args.vae_wp_ep = max(2, round(args.ep * 0.01))
+    if args.disc_wp_ep is None:
+        args.disc_wp_ep = max(4, round(args.ep * 0.02))
+    if args.disc_start_ep is None:
+        args.disc_start_ep = max(10, round(args.ep * 0.2))
     if args.wp == 0:
-        args.wp = args.ep * 1/50
+        args.wp = args.ep / 50
     
     # update args: progressive training
     if args.pgwp == 0:

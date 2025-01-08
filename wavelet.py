@@ -3,11 +3,10 @@ import os
 import numpy as np
 import torch
 import pywt
-import matplotlib.pyplot as plt
 
 from torchvision import transforms
 from PIL import Image
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 from functools import partial
 
 
@@ -28,21 +27,11 @@ def decompose_multilevel_2d(image, wavelet, mode='periodization', level=2):
     return channels
 
 
-def visualize_wavelet_components(ll, lh, hl, hh, level):
-    components = [ll, lh, hl, hh]
-    titles = ['LL', 'LH', 'HL', 'HH']
-    
-    plt.figure(figsize=(10, 10))
-    for i, (comp, title) in enumerate(zip(components, titles)):
-        comp = np.transpose(comp, (1, 2, 0))
-        comp = (comp - comp.min()) / (comp.max() - comp.min())  # normalize to [0, 1]
-        plt.subplot(2, 2, i + 1)
-        plt.imshow(comp)
-        plt.title(title)
-        plt.axis('off')
-    
-    plt.tight_layout()
-    plt.savefig(f'coeffs-level-{level}.png')
+def normalize_01_into_pn1(x):  
+    """
+    Normalize x from [0, 1] to [-1, 1] by (x * 2 - 1)
+    """
+    return x.add(x).add_(-1)
 
 
 def process_images_in_class(class_id, split, dataset_dir, output_dir, decomposition_level=2):
@@ -57,7 +46,8 @@ def process_images_in_class(class_id, split, dataset_dir, output_dir, decomposit
         transforms.Resize(mid_reso, interpolation=transforms.InterpolationMode.LANCZOS),
         transforms.CenterCrop((final_reso, final_reso)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        normalize_01_into_pn1
     ])
 
     class_path = os.path.join(dataset_dir, split, class_id)
@@ -76,7 +66,7 @@ def process_images_in_class(class_id, split, dataset_dir, output_dir, decomposit
             # perform wavelet decomposition
             subbands = decompose_multilevel_2d(img_np, wavelet='haar', level=decomposition_level)
 
-            ll = np.stack([sb[1][0] for sb in subbands], axis=0)
+            ll = np.stack([sb[decomposition_level-1][0] for sb in subbands], axis=0)
             data = {'ll': torch.tensor(ll)}
             for level in range(decomposition_level):
                 lh = np.stack([sb[level][1][0] for sb in subbands], axis=0)
@@ -98,7 +88,7 @@ def process_split(split, dataset_dir, output_dir, decomposition_level=2):
     class_ids = [cid for cid in os.listdir(split_path) if os.path.isdir(os.path.join(split_path, cid))]
 
     # use multiprocessing pool to parallelize the processing
-    pool = Pool(processes=10) 
+    pool = Pool(processes=8) 
     worker = partial(
         process_images_in_class,
         split=split,
@@ -121,6 +111,9 @@ if __name__ == '__main__':
         '--output_dir', type=str,
         default=None, help='Path to the output data directory.'
     )
+    parser.add_argument(
+        '--level', type=int, default=2, help='Wavelet decomposition level.'
+    )
 
     # parse arguments
     args = parser.parse_args()
@@ -132,4 +125,4 @@ if __name__ == '__main__':
     os.makedirs(args.output_dir, exist_ok=True)
 
     for split in ['train', 'val']:
-        process_split(split, args.dataset_dir, args.output_dir, decomposition_level=2)
+        process_split(split, args.dataset_dir, args.output_dir, decomposition_level=args.level)

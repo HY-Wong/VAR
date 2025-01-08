@@ -5,6 +5,7 @@ import wandb
 
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers.wandb import WandbLogger
+from pytorch_lightning.strategies import DDPStrategy
 
 from trainer_wav import VQVAE_WAV_Trainer
 from models import build_vae
@@ -54,17 +55,11 @@ if __name__ == '__main__':
 
     # build the model
     vae = build_vae(
-        patch_nums=(1, 2, 3, 4, 5, 6, 7, 8),
+        patch_nums=args.patch_nums,
         V=4096, Cvae=256, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         init_vae=args.init_vae, init_vocab=args.init_vocab,
-        ch_mult=(1, 2, 2, 2), in_channels=48
+        ch_mult=args.ch_mult, in_channels=args.in_channels
     )
-    # vae = build_vae(
-    #     patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
-    #     V=4096, Cvae=256, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
-    #     init_vae=args.init_vae, init_vocab=args.init_vocab,
-    #     ch_mult=(1, 1, 2, 2, 4), in_channels=48
-    # )
 
     if resume:
         model = VQVAE_WAV_Trainer.load_from_checkpoint(
@@ -79,7 +74,7 @@ if __name__ == '__main__':
         dirpath=save_ckpt_dir, 
         filename='{epoch:03d}', 
         save_last=True, # save the latest
-        save_top_k=1, monitor='val_rec_loss',  mode='min', # save the best based on val_rec_loss
+        save_top_k=1, monitor='val_vae_rec_loss',  mode='min', # save the best based on val_rec_loss
         every_n_epochs=args.save_every_n_epochs
     )
     callbacks = [LearningRateMonitor(), checkpoint_callback]
@@ -88,7 +83,8 @@ if __name__ == '__main__':
     trainer = pl.Trainer(
         accelerator='gpu', num_nodes=num_nodes, devices=gpus, 
         precision='32', deterministic=True,
-        callbacks=callbacks, logger=logger, 
+        callbacks=callbacks, logger=logger,
+        strategy=DDPStrategy(find_unused_parameters=True),
         max_epochs=args.ep
     )
 

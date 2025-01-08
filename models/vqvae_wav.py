@@ -11,7 +11,6 @@ import torch.nn as nn
 
 from .basic_vae import Decoder, Encoder, Upsample2x, Downsample2x
 from .quant import VectorQuantizer2
-from .lpips import LPIPS
 
 
 class VQVAE_WAV(nn.Module):
@@ -26,6 +25,7 @@ class VQVAE_WAV(nn.Module):
         v_patch_nums=(1, 2, 3, 4), # number of patches for each scale, h_{1 to K} = w_{1 to K} = v_patch_nums[k]
         ch_mult=(1, 2, 2, 2),
         in_channels=48,
+        one_level=False,
         test_mode=True,
     ):
         super().__init__()
@@ -51,8 +51,6 @@ class VQVAE_WAV(nn.Module):
         )
         self.quant_conv = torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks//2)
         self.post_quant_conv = torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks//2)
-
-        self.lpips = LPIPS(in_channels)
         
         if self.test_mode:
             self.eval()
@@ -72,10 +70,7 @@ class VQVAE_WAV(nn.Module):
         # print(f'[SHAPE] Decoder features: {f_hat.shape}')
         rec_l1_hs, rec_l2_hs, rec_ll = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
         rec_l1_hs = self.upsample_wav(rec_l1_hs)
-
-        # perceptual loss
-        lpips_loss = torch.mean(self.lpips(rec_inp, inp))
-        return rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss, lpips_loss
+        return rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss, inp, rec_inp
     # ===================== `forward` is only used in VAE training =====================
     
     def fhat_to_img(self, f_hat: torch.Tensor):
