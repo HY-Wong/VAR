@@ -30,6 +30,9 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         self.args = args
         self.steps_per_epoch = steps_per_epoch
         self.disc_start_step = args.disc_start_ep * steps_per_epoch
+        print(f'[INFO] VAE WP EP: {args.vae_wp_ep}')
+        print(f'[INFO] DISC. WP EP: {args.disc_wp_ep}')
+        print(f'[INFO] DISC. START EP: {args.disc_start_ep}')
 
         # reconstruction loss function
         if args.loss_fn == 'l1':
@@ -55,6 +58,8 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         disc_loss = torch.mean(F.relu(1. - logits_fake))
         if self.disc_start_step > global_step:
             disc_loss *= 0.0
+            print(f'[INFO] OPTIM. 1 {self.disc_start_step} > {global_step}')
+        print(f'[INFO] OPTIM. 1 GLOBAL STEP {global_step} -> DISC. LOSS {disc_loss}')
 
         # compound loss
         vae_loss = rec_loss + self.args.lc * vq_loss + self.args.ld * disc_loss
@@ -75,6 +80,8 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         disc_loss = self.disc_loss_fn(logits_real, logits_fake)
         if self.disc_start_step > global_step:
             disc_loss *= 0.0
+            print(f'[INFO] OPTIM. 2 {self.disc_start_step} > {global_step}')
+        print(f'[INFO] OPTIM. 2 GLOBAL STEP {global_step} -> DISC. LOSS {disc_loss}')
 
         disc_log_dict = {
             f'{split}_disc_loss': disc_loss,
@@ -92,9 +99,10 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         vae_opt, disc_opt = self.optimizers()
         
         # optimize VAE
+        # adjust global step to match LR scheduler step: two optimizers -> two steps per iteration
         vae_loss, vae_log_dict = self.get_vae_loss(
             l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp,
-            vq_loss, self.global_step, split='train'
+            vq_loss, self.global_step//2+1, split='train'
         )
         vae_opt.zero_grad()
         self.manual_backward(vae_loss)
@@ -104,7 +112,7 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         
         # optimize Discriminator
         disc_loss, disc_log_dict = self.get_disc_loss(
-            inp.detach(), rec_inp.detach(), self.global_step, split='train'
+            inp.detach(), rec_inp.detach(), self.global_step//2+1, split='train'
         )
         disc_opt.zero_grad()
         self.manual_backward(disc_loss)
@@ -130,12 +138,12 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # VAE
         vae_loss, vae_log_dict = self.get_vae_loss(
             l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp,
-            vq_loss, self.global_step, split='val'
+            vq_loss, self.global_step//2+1, split='val'
         )
 
         # Discriminator
         disc_loss, disc_log_dict = self.get_disc_loss(
-            inp.detach(), rec_inp.detach(), self.global_step, split='val'
+            inp.detach(), rec_inp.detach(), self.global_step//2+1, split='val'
         )
 
         # log
@@ -147,6 +155,8 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
             # denormalization
             self.coeffs = (l1_hs * 2**1, l2_hs * 2**2, ll * 2**2)
             self.rec_coeffs = (rec_l1_hs * 2**1, rec_l2_hs * 2**2, rec_ll * 2**2)
+            # self.coeffs = (l1_hs, l2_hs, ll)
+            # self.rec_coeffs = (rec_l1_hs, rec_l2_hs, rec_ll)
 
     def on_validation_epoch_end(self):
         # reference images
@@ -169,12 +179,12 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # VAE
         vae_loss, vae_log_dict = self.get_vae_loss(
             l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp,
-            vq_loss, self.global_step, split='test'
+            vq_loss, self.global_step//2+1, split='test'
         )
         
         # Discriminator
         disc_loss, disc_log_dict = self.get_disc_loss(
-            inp.detach(), rec_inp.detach(), self.global_step, split='test'
+            inp.detach(), rec_inp.detach(), self.global_step//2+1, split='test'
         )
 
         # log
@@ -212,14 +222,17 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
                 Decay the learning rate with half-cycle cosine after warmup
                 """
                 if current_step < start_steps:
+                    print(f'[INFO] LR {0.0:.2f}')
                     return 0.0
-                elif current_step < wp_steps:
+                elif current_step < start_steps + wp_steps:
                     # linear warmup
+                    print(f'[INFO] LR {wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps:.2f} -> {current_step - start_steps} / {wp_steps}')
                     return wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps
                 else:
                     # cosine annealing decay
                     decay_steps = total_steps - (start_steps + wp_steps)
                     progress = (current_step - (start_steps + wp_steps)) / decay_steps
+                    print(f'[INFO] LR {final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi)):.2f} -> ({current_step} - {start_steps + wp_steps}) / ({total_steps} - {start_steps + wp_steps})')
                     return final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi))
 
             scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
