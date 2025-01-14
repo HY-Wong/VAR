@@ -11,6 +11,7 @@ from typing import List
 from PIL import Image
 
 from models.discriminator import Discriminator, weights_init
+from models.lpips import LPIPS
 
 
 def hinge_d_loss(logits_real, logits_fake):
@@ -24,53 +25,59 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
     def __init__(self, vae, args, steps_per_epoch):
         super().__init__()
         self.vae = vae
+        self.lpips = LPIPS('vgg16_lpips.pth').eval()
         self.discriminator = Discriminator(
             in_channels=args.in_channels, out_channels=args.out_channels, n_layers=args.n_layers
         ).apply(weights_init)
         self.args = args
         self.steps_per_epoch = steps_per_epoch
         self.disc_start_step = args.disc_start_ep * steps_per_epoch
-        print(f'[INFO] VAE WP EP: {args.vae_wp_ep}')
-        print(f'[INFO] DISC. WP EP: {args.disc_wp_ep}')
-        print(f'[INFO] DISC. START EP: {args.disc_start_ep}')
 
         # reconstruction loss function
         if args.loss_fn == 'l1':
             self.rec_loss_fn = nn.L1Loss(reduction='mean')
         elif args.loss_fn == 'l2':
             self.rec_loss_fn = nn.MSELoss(reduction='mean')
-        # perceptual loss function
-        # self.perc_loss_fn = LPIPS(in_channels=args.in_channels).eval()
         # discriminator loss function
         self.disc_loss_fn = hinge_d_loss     
 
         # activates manual optimization for multiple optimizers
         self.automatic_optimization = False
     
+    def calculate_adaptive_weight(self, rec_loss, disc_loss, last_layer):
+        rec_grads = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
+        disc_grads = torch.autograd.grad(disc_loss, last_layer, retain_graph=True)[0]
+
+        ld = torch.norm(rec_grads) / (torch.norm(disc_grads) + 1e-4)
+        ld = torch.clamp(ld, 0.0, 1e4).detach()
+        ld = ld * self.args.ld
+        return ld
+    
     def get_vae_loss(
         self, l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp, 
-        vq_loss, global_step, split
+        vq_loss, last_layer, global_step, split
     ):
         rec_loss = self.rec_loss_fn(rec_l1_hs, l1_hs) + self.rec_loss_fn(rec_l2_hs, l2_hs) + self.rec_loss_fn(rec_ll, ll)
-        # perc_loss = self.lp * self.perc_loss_fn(inp, rec_inp)
+        perc_loss = torch.mean(self.lpips(ll, rec_ll))
 
         logits_fake = self.discriminator(rec_inp)
         disc_loss = torch.mean(F.relu(1. - logits_fake))
+        # ld = self.calculate_adaptive_weight(rec_loss, disc_loss, last_layer)
+        ld = self.args.ld
         if self.disc_start_step > global_step:
             disc_loss *= 0.0
-            print(f'[INFO] OPTIM. 1 {self.disc_start_step} > {global_step}')
-        print(f'[INFO] OPTIM. 1 GLOBAL STEP {global_step} -> DISC. LOSS {disc_loss}')
 
         # compound loss
-        vae_loss = rec_loss + self.args.lc * vq_loss + self.args.ld * disc_loss
-        # vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + self.args.ld * disc_loss
+        # vae_loss = rec_loss + self.args.lc * vq_loss + ld * disc_loss
+        vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss
+        # vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + ld * disc_loss
 
         vae_log_dict = {
             f'{split}_vae_loss': vae_loss,
             f'{split}_vae_rec_loss': rec_loss,
             f'{split}_vae_vq_loss': self.args.lc * vq_loss,
-            # f'{split}_perc_loss': self.args.lp * perc_loss,
-            f'{split}_vae_disc_loss': self.args.ld * disc_loss
+            f'{split}_perc_loss': self.args.lp * perc_loss,
+            # f'{split}_vae_disc_loss': ld * disc_loss
         }
         return vae_loss, vae_log_dict
 
@@ -80,8 +87,6 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         disc_loss = self.disc_loss_fn(logits_real, logits_fake)
         if self.disc_start_step > global_step:
             disc_loss *= 0.0
-            print(f'[INFO] OPTIM. 2 {self.disc_start_step} > {global_step}')
-        print(f'[INFO] OPTIM. 2 GLOBAL STEP {global_step} -> DISC. LOSS {disc_loss}')
 
         disc_log_dict = {
             f'{split}_disc_loss': disc_loss,
@@ -92,6 +97,9 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         (l1_hs, l2_hs, ll), label = batch
+        l1_hs.requires_grad_()
+        l2_hs.requires_grad_()
+        ll.requires_grad_()
         # normalization
         l1_hs, l2_hs, ll = l1_hs / 2**1, l2_hs / 2**2,  ll / 2**2
         rec_l1_hs, rec_l2_hs, rec_ll, _, vq_loss, inp, rec_inp = self.vae(l1_hs, l2_hs, ll)
@@ -102,7 +110,7 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # adjust global step to match LR scheduler step: two optimizers -> two steps per iteration
         vae_loss, vae_log_dict = self.get_vae_loss(
             l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp,
-            vq_loss, self.global_step//2+1, split='train'
+            vq_loss, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
         )
         vae_opt.zero_grad()
         self.manual_backward(vae_loss)
@@ -112,7 +120,7 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         
         # optimize Discriminator
         disc_loss, disc_log_dict = self.get_disc_loss(
-            inp.detach(), rec_inp.detach(), self.global_step//2+1, split='train'
+            inp.detach(), rec_inp.detach(), self.global_step//2+1, 'train'
         )
         disc_opt.zero_grad()
         self.manual_backward(disc_loss)
@@ -138,12 +146,12 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # VAE
         vae_loss, vae_log_dict = self.get_vae_loss(
             l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp,
-            vq_loss, self.global_step//2+1, split='val'
+            vq_loss, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
         )
 
         # Discriminator
         disc_loss, disc_log_dict = self.get_disc_loss(
-            inp.detach(), rec_inp.detach(), self.global_step//2+1, split='val'
+            inp.detach(), rec_inp.detach(), self.global_step//2+1, 'val'
         )
 
         # log
@@ -179,12 +187,12 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # VAE
         vae_loss, vae_log_dict = self.get_vae_loss(
             l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp,
-            vq_loss, self.global_step//2+1, split='test'
+            vq_loss, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
         )
         
         # Discriminator
         disc_loss, disc_log_dict = self.get_disc_loss(
-            inp.detach(), rec_inp.detach(), self.global_step//2+1, split='test'
+            inp.detach(), rec_inp.detach(), self.global_step//2+1, 'test'
         )
 
         # log
@@ -222,17 +230,17 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
                 Decay the learning rate with half-cycle cosine after warmup
                 """
                 if current_step < start_steps:
-                    print(f'[INFO] LR {0.0:.2f}')
+                    # print(f'[INFO] LR {0.0:.2f}')
                     return 0.0
                 elif current_step < start_steps + wp_steps:
                     # linear warmup
-                    print(f'[INFO] LR {wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps:.2f} -> {current_step - start_steps} / {wp_steps}')
+                    # print(f'[INFO] LR {wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps:.2f} -> {current_step - start_steps} / {wp_steps}')
                     return wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps
                 else:
                     # cosine annealing decay
                     decay_steps = total_steps - (start_steps + wp_steps)
                     progress = (current_step - (start_steps + wp_steps)) / decay_steps
-                    print(f'[INFO] LR {final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi)):.2f} -> ({current_step} - {start_steps + wp_steps}) / ({total_steps} - {start_steps + wp_steps})')
+                    # print(f'[INFO] LR {final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi)):.2f} -> ({current_step} - {start_steps + wp_steps}) / ({total_steps} - {start_steps + wp_steps})')
                     return final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi))
 
             scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)

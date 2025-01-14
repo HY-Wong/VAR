@@ -36,13 +36,10 @@ class Discriminator(nn.Module):
 
         # output 1 channel prediction map
         sequence += [nn.Conv2d(out_channels * ch_mult, 1, kernel_size=4, stride=1, padding=1)]  
-        self.convs = nn.Sequential(*sequence)
-        self.sigmoid = nn.Sigmoid()
+        self.model = nn.Sequential(*sequence)
 
     def forward(self, input):
-        x = self.convs(input)
-        x = self.sigmoid(x)
-        return x
+        return self.model(input)
 
 
 def weights_init(model):

@@ -241,6 +241,6 @@ class PhiNonShared(nn.ModuleList):
     
     def __getitem__(self, at_from_0_to_1: float) -> Phi:
         return super().__getitem__(np.argmin(np.abs(self.ticks - at_from_0_to_1)).item())
-    
+     
     def extra_repr(self) -> str:
         return f'ticks={self.ticks}'
