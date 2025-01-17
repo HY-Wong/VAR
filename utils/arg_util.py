@@ -35,7 +35,7 @@ class Args(Tap):
     lc: float = 1.0             # weight of the commitment loss
     lp: float = 5.0             # weight of the perceptual loss
     ld: float = 1.0             # weight of the discriminator loss
-    loss_fn: str = 'l1'         # L1 loss or L2 loss
+    rec_loss_fn: str = 'l1'     # L1 loss or L2 loss
 
     vae_blr: float = 1e-4       # base lr
     vae_lr: float = None        # lr = base lr * (bs / 256)
@@ -50,6 +50,7 @@ class Args(Tap):
     # Discriminator
     n_layers: int = 3           # n-layered discriminator
     out_channels: int = 256     #### 
+    disc_loss_fn: str = 'hinge' ####
 
     disc_blr: float = 1e-4      # base lr
     disc_lr: float = None       # lr = base lr * (bs / 256)
@@ -308,9 +309,9 @@ def init_dist_and_get_args():
     if args.vae_wp_ep is None:
         args.vae_wp_ep = max(2, round(args.ep * 0.01))
     if args.disc_wp_ep is None:
-        args.disc_wp_ep = max(4, round(args.ep * 0.02))
+        args.disc_wp_ep = max(2, round(args.ep * 0.01))
     if args.disc_start_ep is None:
-        args.disc_start_ep = max(10, round(args.ep * 0.2))
+        args.disc_start_ep = max(10, round(args.ep * 0.1))
     if args.wp == 0:
         args.wp = args.ep / 50
     

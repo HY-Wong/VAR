@@ -63,11 +63,11 @@ if __name__ == '__main__':
 
     if resume:
         model = VQVAE_WAV_Trainer.load_from_checkpoint(
-            args.load_ckpt_path, vae=vae, args=args, steps_per_epoch=len(train_loader)
+            args.load_ckpt_path, vae=vae, args=args, steps_per_epoch=len(train_loader) // gpus
         )
         print(f'[INFO] Loaded from {args.load_ckpt_path}')
     else:
-        model = VQVAE_WAV_Trainer(vae=vae, args=args, steps_per_epoch=len(train_loader))
+        model = VQVAE_WAV_Trainer(vae=vae, args=args, steps_per_epoch=len(train_loader) // gpus)
     
     # callbacks
     checkpoint_callback = ModelCheckpoint(
@@ -77,7 +77,7 @@ if __name__ == '__main__':
         save_top_k=1, monitor='val_vae_rec_loss',  mode='min', # save the best based on val_rec_loss
         every_n_epochs=args.save_every_n_epochs
     )
-    callbacks = [LearningRateMonitor(), checkpoint_callback]
+    callbacks = [LearningRateMonitor(logging_interval='step'), checkpoint_callback]
 
     # PyTorch Lightning Trainer
     trainer = pl.Trainer(
