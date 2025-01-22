@@ -27,6 +27,7 @@ class Loss(nn.Module):
         super().__init__()
         self.args = args
         assert args.disc_loss_fn in ['hinge', 'cross_entropy']
+        print(f'[INFO] Use Discriminator with {args.disc_loss_fn}')
 
         # reconstruction loss
         if args.rec_loss_fn == 'l1':
@@ -38,12 +39,12 @@ class Loss(nn.Module):
         # adversarial loss
         if args.disc_loss_fn == 'hinge':
             self.discriminator = DiscriminatorHL(
-                in_channels=args.in_channels, out_channels=args.out_channels, n_layers=args.n_layers
+                in_channels=3, out_channels=args.out_channels, n_layers=args.n_layers
             ).apply(weights_init)
             self.disc_loss_fn = hinge_d_loss
         elif args.disc_loss_fn == 'cross_entropy':
             self.discriminator = DiscriminatorCEL(
-                in_channels=args.in_channels, out_channels=args.out_channels, n_layers=args.n_layers
+                in_channels=3, out_channels=args.out_channels, n_layers=args.n_layers
             ).apply(weights_init)
             self.disc_loss_fn = cross_entropy_d_loss
        
@@ -58,15 +59,14 @@ class Loss(nn.Module):
         return weight
 
     def forward(
-            self, l1_hs, l2_hs, ll, rec_l1_hs, rec_l2_hs, rec_ll, inp, rec_inp, 
-            vq_loss, optimizer_idx, last_layer, global_step, split
+            self, imgs, rec_imgs, vq_loss, optimizer_idx, last_layer, global_step, split
         ):
         # VAE
         if optimizer_idx == 0:
-            rec_loss = self.rec_loss_fn(rec_l1_hs, l1_hs) + self.rec_loss_fn(rec_l2_hs, l2_hs) + self.rec_loss_fn(rec_ll, ll)
-            perc_loss = 0. # torch.mean(self.lpips(ll, rec_ll))
-
-            logits_fake = self.discriminator(rec_inp)
+            rec_loss = self.rec_loss_fn(imgs, rec_imgs)
+            perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
+            
+            logits_fake = self.discriminator(rec_imgs)
             if self.args.disc_loss_fn == 'hinge':
                 disc_loss = -torch.mean(logits_fake)
             elif self.args.disc_loss_fn == 'cross_entropy':
@@ -81,23 +81,25 @@ class Loss(nn.Module):
             if self.disc_start_step > global_step:
                 disc_loss *= 0.0
             print(f'[INFO] {self.disc_start_step} > {global_step}')
-                
+            
             # compound loss
-            vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + weight * self.args.ld * disc_loss
+            # vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + weight * self.args.ld * disc_loss
+            vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + self.args.ld * disc_loss
+            # vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss
             vae_log_dict = {
                 f'{split}_vae_loss': vae_loss.clone().detach(),
                 f'{split}_vae_rec_loss': rec_loss.detach(),
                 f'{split}_vae_vq_loss': self.args.lc * vq_loss.detach(),
-                # f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
-                f'{split}_vae_disc_loss': weight * self.args.ld * disc_loss.detach(),
+                f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
+                f'{split}_vae_disc_loss': self.args.ld * disc_loss.detach(),
                 f'{split}_vae_disc_weight': weight
             }
             return vae_loss, vae_log_dict
 
         # Discriminator
         if optimizer_idx == 1:
-            logits_real = self.discriminator(inp.detach())
-            logits_fake = self.discriminator(rec_inp.detach())
+            logits_real = self.discriminator(imgs.detach())
+            logits_fake = self.discriminator(rec_imgs.detach())
             disc_loss = self.disc_loss_fn(logits_real, logits_fake)
             
             if self.disc_start_step > global_step:

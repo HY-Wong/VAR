@@ -33,7 +33,7 @@ class Args(Tap):
     init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
     # VAE optimization
     lc: float = 1.0             # weight of the commitment loss
-    lp: float = 5.0             # weight of the perceptual loss
+    lp: float = 0.5             # weight of the perceptual loss
     ld: float = 1.0             # weight of the discriminator loss
     rec_loss_fn: str = 'l1'     # L1 loss or L2 loss
 
@@ -49,7 +49,7 @@ class Args(Tap):
 
     # Discriminator
     n_layers: int = 3           # n-layered discriminator
-    out_channels: int = 256     #### 
+    out_channels: int = 64      #### 
     disc_loss_fn: str = 'hinge' ####
 
     disc_blr: float = 1e-4      # base lr
@@ -102,6 +102,7 @@ class Args(Tap):
     patch_size: int = 16
     ch: str = '1_2_2_2'
     in_channels: int = 48
+    wavelet: str = 'haar'
     patch_nums: tuple = None    # [automatically set; don't specify this] = tuple(map(int, args.pn.replace('-', '_').split('_')))
     ch_mult: tuple = None       # [automatically set; don't specify this] = tuple(map(int, args.ch.replace('-', '_').split('_')))
     resos: tuple = None         # [automatically set; don't specify this] = tuple(pn * args.patch_size for pn in args.patch_nums)
@@ -311,7 +312,7 @@ def init_dist_and_get_args():
     if args.disc_wp_ep is None:
         args.disc_wp_ep = max(2, round(args.ep * 0.01))
     if args.disc_start_ep is None:
-        args.disc_start_ep = max(10, round(args.ep * 0.1))
+        args.disc_start_ep = max(10, round(args.ep * 0.2))
     if args.wp == 0:
         args.wp = args.ep / 50
     

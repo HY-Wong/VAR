@@ -76,12 +76,12 @@ class DiscriminatorCEL(nn.Module):
         self.conv_block = nn.Sequential(*sequence)
 
         # output binary class logits
-        self.in_features = out_channels * ch_mult * 7 * 7
+        self.in_features = out_channels * ch_mult * 31 * 31
         self.classifier_head = nn.Sequential(
-            nn.Linear(in_features=self.in_features, out_features=out_channels),
-            nn.ReLU(inplace=True),
+            nn.Linear(in_features=self.in_features, out_features=out_channels * ch_mult),
+            nn.LeakyReLU(0.2, True),
             nn.Dropout(p=0.5),
-            nn.Linear(in_features=256, out_features=1)
+            nn.Linear(in_features=out_channels * ch_mult, out_features=1)
         )
 
     def forward(self, input):

@@ -46,7 +46,7 @@ def build_vae(
     # VQVAE args
     V=4096, Cvae=32, ch=160, share_quant_resi=4,
     init_vae=-0.5, init_vocab=-1,
-    ch_mult=(1, 2, 2, 2), in_channels=48, one_level=False
+    ch_mult=(1, 2, 2, 2), in_channels=48, wavelet='haar'
 ) -> VQVAE_WAV:
     # disable built-in initialization for speed
     for clz in (nn.Linear, nn.LayerNorm, nn.BatchNorm2d, nn.SyncBatchNorm, nn.Conv1d, nn.Conv2d, nn.ConvTranspose1d, nn.ConvTranspose2d):
@@ -56,7 +56,8 @@ def build_vae(
     vae = VQVAE_WAV(
         vocab_size=V, z_channels=Cvae, ch=ch, 
         test_mode=False, share_quant_resi=share_quant_resi, 
-        v_patch_nums=patch_nums, ch_mult=ch_mult, in_channels=in_channels, one_level=False
+        v_patch_nums=patch_nums, ch_mult=ch_mult, 
+        in_channels=in_channels, wavelet=wavelet
     )
     
     # init weights
@@ -65,11 +66,10 @@ def build_vae(
         vae.decoder,
         vae.quant_conv,
         vae.quantize,
-        vae.post_quant_conv
+        vae.post_quant_conv,
+        vae.downsample_wav,
+        vae.upsample_wav
     ]
-    if not one_level:
-        need_init.append(vae.downsample_wav)
-        need_init.append(vae.upsample_wav)
 
     for vv in need_init:
         init_weights(vv, init_vae)

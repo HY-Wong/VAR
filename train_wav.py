@@ -1,7 +1,6 @@
 import os
 import torch
 import pytorch_lightning as pl
-import wandb
 
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers.wandb import WandbLogger
@@ -10,7 +9,7 @@ from pytorch_lightning.strategies import DDPStrategy
 from trainer_wav import VQVAE_WAV_Trainer
 from models import build_vae
 from utils import arg_util
-from utils.data_wav import WaveletDataModule
+from utils.data import ImageDataModule
 
 
 if __name__ == '__main__':
@@ -41,15 +40,12 @@ if __name__ == '__main__':
         )
     
     # data loading
-    data_module = WaveletDataModule(args)
+    data_module = ImageDataModule(args)
     train_loader = data_module.train_dataloader()
 
     # inspect the first batch
-    (l1_hs, l2_hs, ll), label = next(iter(train_loader))
-    print(f'[INFO] Batch level 1 highs shape: {l1_hs.shape}')
-    print(f'[INFO] Batch level 2 highs shape: {l2_hs.shape}')
-    print(f'[INFO] Batch lows shape: {ll.shape}')
-    print(f'[INFO] Batch label shape: {label.shape}')
+    imgs, labels = next(iter(train_loader))
+    print(f'[INFO] Batch images shape: {imgs.shape}')
     print(f'[INFO] Cumulative batch size: {args.bs}')
     print(f'[INFO] Final learning rate: {args.vae_lr}')
 
@@ -58,7 +54,8 @@ if __name__ == '__main__':
         patch_nums=args.patch_nums,
         V=4096, Cvae=256, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         init_vae=args.init_vae, init_vocab=args.init_vocab,
-        ch_mult=args.ch_mult, in_channels=args.in_channels
+        ch_mult=args.ch_mult, 
+        in_channels=args.in_channels, wavelet=args.wavelet
     )
 
     if resume:

@@ -5,6 +5,7 @@ References:
 - VQVAE (VQModel): https://github.com/CompVis/stable-diffusion/blob/21f890f9da3cfbeaba8e2ac3c425ee9e998d5229/ldm/models/autoencoder.py#L14
 """
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from pytorch_wavelets import DWTForward, DWTInverse
 
 import torch
 import torch.nn as nn
@@ -22,10 +23,9 @@ class VQVAE_WAV(nn.Module):
         quant_resi=0.5,         # 0.5 means \phi(x) = 0.5conv(x) + (1-0.5)x
         share_quant_resi=4,     # use 4 \phi layers for K scales: partially-shared \phi
         default_qresi_counts=0, # if is 0: automatically set to len(v_patch_nums)
-        v_patch_nums=(1, 2, 3, 4), # number of patches for each scale, h_{1 to K} = w_{1 to K} = v_patch_nums[k]
+        v_patch_nums=(1, 2, 3, 4, 5, 6, 7, 8), # number of patches for each scale, h_{1 to K} = w_{1 to K} = v_patch_nums[k]
         ch_mult=(1, 2, 2, 2),
-        in_channels=48,
-        one_level=False,
+        in_channels=48, wavelet='haar',
         test_mode=True,
     ):
         super().__init__()
@@ -38,8 +38,12 @@ class VQVAE_WAV(nn.Module):
             using_sa=True, using_mid_sa=True,                             # from vq-f16/config.yaml above
         )
         ddconfig.pop('double_z', None) # only KL-VAE should use double_z=True
+        # 2-level wavelet decomposition
+        self.dwt = DWTForward(J=2, wave=wavelet, mode='zero')
+        self.idwt = DWTInverse(wave=wavelet, mode='zero')
         self.downsample_wav = Downsample2x(in_channels=9, out_channels=9*4) # (9, 128, 128) -> (36, 64, 64)
         self.upsample_wav = Upsample2x(in_channels=9*4, out_channels=9) # (36, 64, 64) -> (9, 128, 128)
+        
         self.encoder = Encoder(double_z=False, **ddconfig)
         self.decoder = Decoder(**ddconfig)
         
@@ -57,20 +61,31 @@ class VQVAE_WAV(nn.Module):
             [p.requires_grad_(False) for p in self.parameters()]
     
     # ===================== `forward` is only used in VAE training =====================
-    def forward(self, l1_hs, l2_hs, ll, ret_usages=False):   # -> rec_B3HW, idx_N, loss
-        l1_hs = self.downsample_wav(l1_hs)
-        inp = torch.cat([l1_hs, l2_hs, ll], dim=1)
+    def forward(self, img, ret_usages=False):   # -> rec_B3HW, idx_N, loss
+        yl, yhs = self.dwt(img)
+        yh1, yh2 = yhs # list(N, C, 3, H, W)
+        # normalization
+        yh1, yh2, yl = yh1 / 2**1, yh2 / 2**2,  yl / 2**2
+        yh1 = yh1.view(yh1.shape[0], -1, yh1.shape[3], yh1.shape[4]) # -> (N, C * 3, H, W)
+        yh2 = yh2.view(yh2.shape[0], -1, yh2.shape[3], yh2.shape[4]) # -> (N, C * 3, H, W)
+        yh1 = self.downsample_wav(yh1)
+        
+        inp = torch.cat([yh1, yh2, yl], dim=1)
         VectorQuantizer2.forward
         f = self.encoder(inp)
         # print(f'[SHAPE] Input: {inp.shape}')
         # print(f'[SHAPE] Encoder features: {f.shape}')
         f_hat, usages, vq_loss = self.quantize(self.quant_conv(f), ret_usages=ret_usages)
         rec_inp = self.decoder(self.post_quant_conv(f_hat))
-        # print(f'[SHAPE] Reconstructed input: {rec_inp.shape}')
-        # print(f'[SHAPE] Decoder features: {f_hat.shape}')
-        rec_l1_hs, rec_l2_hs, rec_ll = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
-        rec_l1_hs = self.upsample_wav(rec_l1_hs)
-        return rec_l1_hs, rec_l2_hs, rec_ll, usages, vq_loss, inp, rec_inp
+        
+        rec_yh1, rec_yh2, rec_yl = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
+        rec_yh1 = self.upsample_wav(rec_yh1)
+        rec_yh1 = rec_yh1.view(rec_yh1.shape[0], 3, 3, rec_yh1.shape[2], rec_yh1.shape[3]) # -> (N, C, 3, H, W)
+        rec_yh2 = rec_yh2.view(rec_yh2.shape[0], 3, 3, rec_yh2.shape[2], rec_yh2.shape[3]) # -> (N, C, 3, H, W)
+        # denormalization
+        rec_yh1, rec_yh2, rec_yl = rec_yh1 * 2**1, rec_yh2 * 2**2,  rec_yl * 2**2
+        rec_img = self.idwt((rec_yl, [rec_yh1, rec_yh2]))
+        return rec_img, usages, vq_loss
     # ===================== `forward` is only used in VAE training =====================
     
     def fhat_to_img(self, f_hat: torch.Tensor):
