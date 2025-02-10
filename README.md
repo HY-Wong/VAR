@@ -53,13 +53,13 @@ CUDA_VISIBLE_DEVICES=0 python3 evaluator_vae_wav.py --data_path=/path/to/imagene
 - **`--ld`** *(default: 1.0)*  
   Weight of the Discriminator loss.
 
-- **`--rec_loss_fn`** *(default: l1)*
+- **`--rec_loss_fn`** *(default: l1)*  
   Reconstruction loss function. Supported options: `l1`, `l2`, and `focal`.
 
-- **`--disc_loss_fn`** *(default: hinge)*
+- **`--disc_loss_fn`** *(default: hinge)*  
   Discriminator loss function. Supported options: `hinge` and `cross_entropy`.
 
-- **`--disc_blr`** *(default: 1e-4)*
+- **`--disc_blr`** *(default: 1e-4)*  
   Base learning rate for the Discriminator.
 
 - **`--disc_start_ep`**  
@@ -91,7 +91,7 @@ CUDA_VISIBLE_DEVICES=0 python3 evaluator_vae_wav.py --data_path=/path/to/imagene
 - **`models/vqvae_wav.py`**  
   VQVAE implementation for wavelet data.
 
-- **`models/loss.py`**
+- **`models/loss.py`**  
   Defines the loss functions for training.
 
 - **`models/discriminator.py`**  
