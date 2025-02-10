@@ -5,14 +5,32 @@ References:
 - VQVAE (VQModel): https://github.com/CompVis/stable-diffusion/blob/21f890f9da3cfbeaba8e2ac3c425ee9e998d5229/ldm/models/autoencoder.py#L14
 """
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-from pytorch_wavelets import DWTForward, DWTInverse
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from .basic_vae import Decoder, Encoder, Upsample2x, Downsample2x
+from .basic_vae import Decoder, Encoder
 from .quant import VectorQuantizer2
 
+
+class UpsampleWav(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.upconv = torch.nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3, stride=2, padding=0)
+    
+    def forward(self, x):
+        return F.pad(self.upconv(x), pad=(0, -1, 0, -1))
+
+
+class DownsampleWav(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=0)
+    
+    def forward(self, x):
+        return self.conv(F.pad(x, pad=(0, 1, 0, 1), mode='constant', value=0))
+    
 
 class VQVAE_WAV(nn.Module):
     def __init__(
@@ -23,9 +41,8 @@ class VQVAE_WAV(nn.Module):
         quant_resi=0.5,         # 0.5 means \phi(x) = 0.5conv(x) + (1-0.5)x
         share_quant_resi=4,     # use 4 \phi layers for K scales: partially-shared \phi
         default_qresi_counts=0, # if is 0: automatically set to len(v_patch_nums)
-        v_patch_nums=(1, 2, 3, 4, 5, 6, 7, 8), # number of patches for each scale, h_{1 to K} = w_{1 to K} = v_patch_nums[k]
-        ch_mult=(1, 2, 2, 2),
-        in_channels=48, wavelet='haar',
+        v_patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16), # number of patches for each scale, h_{1 to K} = w_{1 to K} = v_patch_nums[k]
+        ch_mult=(1, 2, 4), in_channels=48,
         test_mode=True,
     ):
         super().__init__()
@@ -38,11 +55,9 @@ class VQVAE_WAV(nn.Module):
             using_sa=True, using_mid_sa=True,                             # from vq-f16/config.yaml above
         )
         ddconfig.pop('double_z', None) # only KL-VAE should use double_z=True
-        # 2-level wavelet decomposition
-        self.dwt = DWTForward(J=2, wave=wavelet, mode='zero')
-        self.idwt = DWTInverse(wave=wavelet, mode='zero')
-        self.downsample_wav = Downsample2x(in_channels=9, out_channels=9*4) # (9, 128, 128) -> (36, 64, 64)
-        self.upsample_wav = Upsample2x(in_channels=9*4, out_channels=9) # (36, 64, 64) -> (9, 128, 128)
+
+        self.downsample_wav = DownsampleWav(in_channels=9, out_channels=36) # (9, 128, 128) -> (36, 64, 64)
+        self.upsample_wav = UpsampleWav(in_channels=36, out_channels=9) # (36, 64, 64) -> (9, 128, 128)
         
         self.encoder = Encoder(double_z=False, **ddconfig)
         self.decoder = Decoder(**ddconfig)
@@ -61,31 +76,18 @@ class VQVAE_WAV(nn.Module):
             [p.requires_grad_(False) for p in self.parameters()]
     
     # ===================== `forward` is only used in VAE training =====================
-    def forward(self, img, ret_usages=False):   # -> rec_B3HW, idx_N, loss
-        yl, yhs = self.dwt(img)
-        yh1, yh2 = yhs # list(N, C, 3, H, W)
-        # normalization
-        yh1, yh2, yl = yh1 / 2**1, yh2 / 2**2,  yl / 2**2
-        yh1 = yh1.view(yh1.shape[0], -1, yh1.shape[3], yh1.shape[4]) # -> (N, C * 3, H, W)
-        yh2 = yh2.view(yh2.shape[0], -1, yh2.shape[3], yh2.shape[4]) # -> (N, C * 3, H, W)
-        yh1 = self.downsample_wav(yh1)
-        
-        inp = torch.cat([yh1, yh2, yl], dim=1)
+    def forward(self, yh1, yh2, yl, ret_usages=False):   # -> rec_B3HW, idx_N, loss
+        yh1_ = self.downsample_wav(yh1) 
+        inp = torch.cat([yh1_, yh2, yl], dim=1)
         VectorQuantizer2.forward
         f = self.encoder(inp)
         # print(f'[SHAPE] Input: {inp.shape}')
         # print(f'[SHAPE] Encoder features: {f.shape}')
         f_hat, usages, vq_loss = self.quantize(self.quant_conv(f), ret_usages=ret_usages)
         rec_inp = self.decoder(self.post_quant_conv(f_hat))
-        
-        rec_yh1, rec_yh2, rec_yl = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
-        rec_yh1 = self.upsample_wav(rec_yh1)
-        rec_yh1 = rec_yh1.view(rec_yh1.shape[0], 3, 3, rec_yh1.shape[2], rec_yh1.shape[3]) # -> (N, C, 3, H, W)
-        rec_yh2 = rec_yh2.view(rec_yh2.shape[0], 3, 3, rec_yh2.shape[2], rec_yh2.shape[3]) # -> (N, C, 3, H, W)
-        # denormalization
-        rec_yh1, rec_yh2, rec_yl = rec_yh1 * 2**1, rec_yh2 * 2**2,  rec_yl * 2**2
-        rec_img = self.idwt((rec_yl, [rec_yh1, rec_yh2]))
-        return rec_img, usages, vq_loss
+        rec_yh1_, rec_yh2, rec_yl = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
+        rec_yh1 = self.upsample_wav(rec_yh1_)
+        return rec_yh1, rec_yh2, rec_yl, yh1_, rec_yh1_, usages, f, vq_loss
     # ===================== `forward` is only used in VAE training =====================
     
     def fhat_to_img(self, f_hat: torch.Tensor):

@@ -34,8 +34,9 @@ class Args(Tap):
     # VAE optimization
     lc: float = 1.0             # weight of the commitment loss
     lp: float = 0.5             # weight of the perceptual loss
-    ld: float = 1.0             # weight of the discriminator loss
-    rec_loss_fn: str = 'l1'     # L1 loss or L2 loss
+    lm: float = 10000.0         # weight of the maximum-mean-discrepancy loss
+    ld: float = 1.0             # weight of the adversarial loss
+    rec_loss_fn: str = 'l1'     # L1 loss, L2 loss or focal frequency loss
 
     vae_blr: float = 1e-4       # base lr
     vae_lr: float = None        # lr = base lr * (bs / 256)
@@ -49,8 +50,8 @@ class Args(Tap):
 
     # Discriminator
     n_layers: int = 3           # n-layered discriminator
-    out_channels: int = 64      #### 
-    disc_loss_fn: str = 'hinge' ####
+    out_channels: int = 64      # num of output channels for the first convolutional layer
+    disc_loss_fn: str = 'hinge' # hinge loss or cross-entropy loss
 
     disc_blr: float = 1e-4      # base lr
     disc_lr: float = None       # lr = base lr * (bs / 256)
@@ -83,9 +84,9 @@ class Args(Tap):
     glb_batch_size: int = 0 # [automatically set; don't specify this] global batch size = args.batch_size * dist.get_world_size()
     ac: int = 1             # gradient accumulation
     
-    ep: int = 250
+    ep: int = 150
     wp: float = 0
-    wp0: float = 0.005      # initial lr ratio at the begging of lr warm up
+    wp0: float = 0.005      # initial lr ratio at the beginning of lr warm up
     wpe: float = 0.01       # final lr ratio at the end of training
     sche: str = 'lin0'      # lr schedule
     
@@ -98,11 +99,12 @@ class Args(Tap):
     fuse: bool = True       # whether to use fused op like flash attn, xformers, fused MLP, fused LayerNorm, etc.
     
     # data
-    pn: str = '1_2_3_4_5_6_7_8'
+    pn: str = '1_2_3_4_5_6_8_10_13_16'
     patch_size: int = 16
-    ch: str = '1_2_2_2'
-    in_channels: int = 48
-    wavelet: str = 'haar'
+    ch: str = '1_2_4'
+    in_channels: int = 48       # num of input channels after concatenating coefficient inputs
+    Cvae: int = 256             # num of latent channels
+    wavelet: str = 'haar'       # type of wavelet transform used
     patch_nums: tuple = None    # [automatically set; don't specify this] = tuple(map(int, args.pn.replace('-', '_').split('_')))
     ch_mult: tuple = None       # [automatically set; don't specify this] = tuple(map(int, args.ch.replace('-', '_').split('_')))
     resos: tuple = None         # [automatically set; don't specify this] = tuple(pn * args.patch_size for pn in args.patch_nums)
@@ -110,7 +112,7 @@ class Args(Tap):
     data_load_reso: int = None  # [automatically set; don't specify this] would be max(patch_nums) * patch_size
     mid_reso: float = 1.125     # aug: first resize to mid_reso = 1.125 * data_load_reso, then crop to data_load_reso
     hflip: bool = False         # augmentation: horizontal flip
-    workers: int = 32           # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
+    workers: int = 16           # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
     
     # progressive training
     pg: float = 0.0         # >0 for use progressive training during [0%, this] of training
@@ -146,8 +148,9 @@ class Args(Tap):
     gpus: int = None                    # [automatically set; don't specify this]
     num_nodes: int = 1                  # number of nodes in a distributed setup
     save_every_n_epochs: int = 1        # frequency of checkpoint saving
-    save_ckpt_dir: str = 'configs'    # directory for saving checkpoint
+    save_ckpt_dir: str = 'configs'      # directory for saving checkpoint
     load_ckpt_path: str = None          # path to load checkpoint
+    rec_filename: str = None            # name of the reconstructed image file
     wandb_project: str = 'vqvae'        # name of the project to which this run will belong
     wandb_name: str = 'stage_1'         # name of the run
     wandb_id: str = None                # run ID resuming logging of a model

@@ -42,11 +42,11 @@ def build_vae_var(
 
 def build_vae(
     # Shared args
-    patch_nums=(1, 2, 3, 4, 5, 6, 7, 8),   # 8 steps by default
+    patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),   # 10 steps by default
     # VQVAE args
     V=4096, Cvae=32, ch=160, share_quant_resi=4,
     init_vae=-0.5, init_vocab=-1,
-    ch_mult=(1, 2, 2, 2), in_channels=48, wavelet='haar'
+    ch_mult=(1, 2, 4), in_channels=48
 ) -> VQVAE_WAV:
     # disable built-in initialization for speed
     for clz in (nn.Linear, nn.LayerNorm, nn.BatchNorm2d, nn.SyncBatchNorm, nn.Conv1d, nn.Conv2d, nn.ConvTranspose1d, nn.ConvTranspose2d):
@@ -56,8 +56,7 @@ def build_vae(
     vae = VQVAE_WAV(
         vocab_size=V, z_channels=Cvae, ch=ch, 
         test_mode=False, share_quant_resi=share_quant_resi, 
-        v_patch_nums=patch_nums, ch_mult=ch_mult, 
-        in_channels=in_channels, wavelet=wavelet
+        v_patch_nums=patch_nums, ch_mult=ch_mult, in_channels=in_channels
     )
     
     # init weights

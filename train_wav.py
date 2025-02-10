@@ -52,10 +52,9 @@ if __name__ == '__main__':
     # build the model
     vae = build_vae(
         patch_nums=args.patch_nums,
-        V=4096, Cvae=256, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+        V=4096, Cvae=args.Cvae, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         init_vae=args.init_vae, init_vocab=args.init_vocab,
-        ch_mult=args.ch_mult, 
-        in_channels=args.in_channels, wavelet=args.wavelet
+        ch_mult=args.ch_mult, in_channels=args.in_channels
     )
 
     if resume:

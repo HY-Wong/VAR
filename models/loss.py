@@ -92,15 +92,15 @@ class Loss(nn.Module):
         return weight
 
     def forward(
-            self, imgs, yh1_norm, yh2_norm, yl_norm, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, 
+            self, imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
             f, vq_loss, optimizer_idx, last_layer, global_step, split
         ):
         # VAE
         if optimizer_idx == 0:
             rec_loss = self.rec_loss_fn(yh1_norm, rec_yh1_norm) + self.rec_loss_fn(yh2_norm, rec_yh2_norm) + self.rec_loss_fn(yl_norm, rec_yl_norm)
-            # perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
-            mmd_loss = self.mmd_loss_fn(f)
-            """
+            rec_loss += self.rec_loss_fn(yh1_, rec_yh1_)
+            perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
+            
             logits_fake = self.discriminator(rec_imgs)
             if self.args.disc_loss_fn == 'hinge':
                 disc_loss = -torch.mean(logits_fake)
@@ -115,20 +115,17 @@ class Loss(nn.Module):
                 weight = 1.0
             if self.disc_start_step > global_step:
                 disc_loss *= 0.0
-            """
             
             # compound loss
-            # vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + weight * self.args.ld * disc_loss
-            # vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + self.args.ld * disc_loss
-            vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lm * mmd_loss # + self.args.lp * perc_loss
+            vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + weight * self.args.ld * disc_loss
+            
             vae_log_dict = {
                 f'{split}_vae_loss': vae_loss.clone().detach(),
                 f'{split}_vae_rec_loss': rec_loss.detach(),
                 f'{split}_vae_vq_loss': self.args.lc * vq_loss.detach(),
-                f'{split}_vae_mmd_loss': self.args.lm * mmd_loss.detach(),
-                # f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
-                # f'{split}_vae_disc_loss': self.args.ld * disc_loss.detach(),
-                # f'{split}_vae_disc_weight': weight
+                f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
+                f'{split}_vae_disc_loss': self.args.ld * disc_loss.detach(),
+                f'{split}_vae_disc_weight': weight
             }
             return vae_loss, vae_log_dict
 

@@ -1,14 +1,11 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
 import torchvision
 import numpy as np
-import pywt
 import wandb
 
-from typing import List
 from PIL import Image
+from pytorch_wavelets import DWTForward, DWTInverse
 
 from models.loss import Loss
 
@@ -17,32 +14,42 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         super().__init__()
         self.vae = vae
         self.loss = Loss(args, steps_per_epoch)
+        # 2-level wavelet decomposition
+        self.dwt = DWTForward(J=2, wave=args.wavelet, mode='zero')
+        self.idwt = DWTInverse(wave=args.wavelet, mode='zero')
         self.args = args
         self.steps_per_epoch = steps_per_epoch
-
-        print(f'[INFO] vae_wp_ep {args.vae_wp_ep}')
-        print(f'[INFO] disc_wp_ep {args.disc_wp_ep}')
-        print(f'[INFO] disc_start_ep {args.disc_start_ep}')
          
         # activates manual optimization for multiple optimizers
         self.automatic_optimization = False
     
     def forward(self, imgs):
-        return self.vae(imgs)
+        yl, (yh1, yh2) = self.dwt(imgs)
+        yh1 = yh1.view(yh1.shape[0], -1, yh1.shape[3], yh1.shape[4]) # -> (N, C * 3, H, W)
+        yh2 = yh2.view(yh2.shape[0], -1, yh2.shape[3], yh2.shape[4]) # -> (N, C * 3, H, W)
+        yh1_norm, yh2_norm, yl_norm = yh1 / 2, yh2 / 4,  yl / 4 # normalization
+
+        rec_yh1_norm, rec_yh2_norm, rec_yl_norm, yh1_, rec_yh1_, usages, f, vq_loss = self.vae(yh1_norm, yh2_norm, yl_norm)
+    
+        rec_yh1, rec_yh2, rec_yl = rec_yh1_norm * 2, rec_yh2_norm * 4,  rec_yl_norm * 4 # denormalization
+        rec_yh1 = rec_yh1.view(rec_yh1.shape[0], 3, 3, rec_yh1.shape[2], rec_yh1.shape[3]) # -> (N, C, 3, H, W)
+        rec_yh2 = rec_yh2.view(rec_yh2.shape[0], 3, 3, rec_yh2.shape[2], rec_yh2.shape[3]) # -> (N, C, 3, H, W)
+        rec_imgs = self.idwt((rec_yl, [rec_yh1, rec_yh2]))
+        return yh1_norm, yh2_norm, yl_norm, yh1_, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_, rec_imgs, usages, f, vq_loss
 
     def training_step(self, batch, batch_idx):
         imgs, labels = batch
-        rec_imgs, _, vq_loss = self(imgs)
+        yh1_norm, yh2_norm, yl_norm, yh1_, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_, rec_imgs, _, f, vq_loss = self(imgs)
 
         vae_opt, disc_opt = self.optimizers()
         
         # optimize VAE
         # adjust global step to match LR scheduler step: two optimizers -> two steps per iteration
         vae_loss, vae_log_dict = self.loss(
-            imgs, rec_imgs, vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
+            imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
+            f, vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
         )
-    
-        print(f'[INFO] VAE {self.global_step}, {vae_loss}')
+        
         vae_opt.zero_grad()
         self.manual_backward(vae_loss)
         # clip gradients
@@ -51,9 +58,10 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         
         # optimize Discriminator
         disc_loss, disc_log_dict = self.loss(
-            imgs, rec_imgs, vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
+            imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
+            f, vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
         )
-        print(f'[INFO] DISC {self.global_step}, {disc_loss}')
+        
         disc_opt.zero_grad()
         self.manual_backward(disc_loss)
         # clip gradients
@@ -73,16 +81,18 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         imgs, labels = batch
-        rec_imgs, _, vq_loss = self(imgs)
+        yh1_norm, yh2_norm, yl_norm, yh1_, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_, rec_imgs, _, f, vq_loss = self(imgs)
         
         # VAE
         vae_loss, vae_log_dict = self.loss(
-            imgs, rec_imgs, vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
+            imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
+            f, vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
         )
         
         # Discriminator
         disc_loss, disc_log_dict = self.loss(
-            imgs, rec_imgs, vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
+            imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
+            f, vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
         )
         
         # log
@@ -108,16 +118,18 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         imgs, labels = batch
-        rec_imgs, _, vq_loss = self(imgs)
+        yh1_norm, yh2_norm, yl_norm, yh1_, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_, rec_imgs, _, f, vq_loss = self(imgs)
         
         # VAE
         vae_loss, vae_log_dict = self.loss(
-            imgs, rec_imgs, vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
+            imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
+            f, vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
         )
 
         # Discriminator
         disc_loss, disc_log_dict = self.loss(
-            imgs, rec_imgs, vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
+            imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
+            f, vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
         ) 
         
         # log
@@ -158,13 +170,11 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
                     return 0.0
                 elif current_step < start_steps + wp_steps:
                     # linear warmup
-                    print(f'[INFO] LR {wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps:.2f} -> {current_step - start_steps} / {wp_steps}')
                     return wp_lr + (1 - wp_lr) * (current_step - start_steps) / wp_steps
                 else:
                     # cosine annealing decay
                     decay_steps = total_steps - (start_steps + wp_steps)
                     progress = (current_step - (start_steps + wp_steps)) / decay_steps
-                    print(f'[INFO] LR {final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi)):.2f} -> ({current_step} - {start_steps + wp_steps}) / ({total_steps} - {start_steps + wp_steps})')
                     return final_lr + (1 - final_lr) * 0.5 * (1 + np.cos(progress * np.pi))
 
             scheduler = {
