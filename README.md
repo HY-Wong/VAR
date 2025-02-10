@@ -59,10 +59,10 @@ CUDA_VISIBLE_DEVICES=0 python3 evaluator_vae_wav.py --data_path=/path/to/imagene
 - **`--disc_loss_fn`** *(default: hinge)*
   Discriminator loss function. Supported options: `hinge` and `cross_entropy`.
 
-- **`--disc_blr`** *(default: 1e-4)*  
+- **`--disc_blr`** *(default: 1e-4)*
   Base learning rate for the Discriminator.
 
-- **`--disc_start_ep`**
+- **`--disc_start_ep`**  
   Epoch at which Discriminator training begins. Training starts at `0.2 * ep` by default.
 
 - **`--pn`** *(default: '1_2_3_4_5_6_8_10_13_16')*  
