@@ -92,40 +92,42 @@ class Loss(nn.Module):
         return weight
 
     def forward(
-            self, imgs, yh1_norm, yh2_norm, yl_norm, yh1_, rec_imgs, rec_yh1_norm, rec_yh2_norm, rec_yl_norm, rec_yh1_,
-            f, vq_loss, optimizer_idx, last_layer, global_step, split
+            self, imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
+            vq_loss, optimizer_idx, last_layer, global_step, split
         ):
         # VAE
         if optimizer_idx == 0:
-            rec_loss = self.rec_loss_fn(yh1_norm, rec_yh1_norm) + self.rec_loss_fn(yh2_norm, rec_yh2_norm) + self.rec_loss_fn(yl_norm, rec_yl_norm)
-            rec_loss += self.rec_loss_fn(yh1_, rec_yh1_)
-            perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
+            rec_loss = self.rec_loss_fn(h1, rec_h1) + self.rec_loss_fn(h2, rec_h2) + self.rec_loss_fn(ll2, rec_ll2)
+            # perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
+            # up_ll2 = F.interpolate(ll2, size=(256, 256), mode='bilinear', align_corners=False)
+            # up_rec_ll2 = F.interpolate(rec_ll2, size=(256, 256), mode='bilinear', align_corners=False)
+            # perc_loss = torch.mean(self.lpips(up_ll2, up_rec_ll2))
             
-            logits_fake = self.discriminator(rec_imgs)
-            if self.args.disc_loss_fn == 'hinge':
-                disc_loss = -torch.mean(logits_fake)
-            elif self.args.disc_loss_fn == 'cross_entropy':
-                labels_real = torch.ones(logits_fake.shape[0], dtype=torch.float, device=logits_fake.device).unsqueeze(1)
-                disc_loss = F.binary_cross_entropy_with_logits(logits_fake, labels_real)
+            # logits_fake = self.discriminator(rec_imgs)
+            # if self.args.disc_loss_fn == 'hinge':
+            #     disc_loss = -torch.mean(logits_fake)
+            # elif self.args.disc_loss_fn == 'cross_entropy':
+            #     labels_real = torch.ones(logits_fake.shape[0], dtype=torch.float, device=logits_fake.device).unsqueeze(1)
+            #     disc_loss = F.binary_cross_entropy_with_logits(logits_fake, labels_real)
             
-            try:
-                weight = self.calculate_adaptive_weight(rec_loss, disc_loss, last_layer=last_layer)
-            except RuntimeError:
-                assert not self.training
-                weight = 1.0
-            if self.disc_start_step > global_step:
-                disc_loss *= 0.0
+            # try:
+            #     weight = self.calculate_adaptive_weight(rec_loss, disc_loss, last_layer=last_layer)
+            # except RuntimeError:
+            #     assert not self.training
+            #     weight = 1.0
+            # if self.disc_start_step > global_step:
+            #     disc_loss *= 0.0
             
             # compound loss
-            vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + weight * self.args.ld * disc_loss
+            vae_loss = rec_loss + self.args.lc * vq_loss # + self.args.lp * perc_loss # + weight * self.args.ld * disc_loss
             
             vae_log_dict = {
                 f'{split}_vae_loss': vae_loss.clone().detach(),
                 f'{split}_vae_rec_loss': rec_loss.detach(),
                 f'{split}_vae_vq_loss': self.args.lc * vq_loss.detach(),
-                f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
-                f'{split}_vae_disc_loss': self.args.ld * disc_loss.detach(),
-                f'{split}_vae_disc_weight': weight
+                # f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
+                # f'{split}_vae_disc_loss': self.args.ld * disc_loss.detach(),
+                # f'{split}_vae_disc_weight': weight
             }
             return vae_loss, vae_log_dict
 

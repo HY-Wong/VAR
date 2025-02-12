@@ -33,7 +33,7 @@ class Args(Tap):
     init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
     # VAE optimization
     lc: float = 1.0             # weight of the commitment loss
-    lp: float = 0.5             # weight of the perceptual loss
+    lp: float = 0.1             # weight of the perceptual loss
     lm: float = 10000.0         # weight of the maximum-mean-discrepancy loss
     ld: float = 1.0             # weight of the adversarial loss
     rec_loss_fn: str = 'l1'     # L1 loss, L2 loss or focal frequency loss
@@ -103,7 +103,7 @@ class Args(Tap):
     patch_size: int = 16
     ch: str = '1_2_4'
     in_channels: int = 48       # num of input channels after concatenating coefficient inputs
-    Cvae: int = 256             # num of latent channels
+    Cvae: int = 32              # num of latent channels
     wavelet: str = 'haar'       # type of wavelet transform used
     patch_nums: tuple = None    # [automatically set; don't specify this] = tuple(map(int, args.pn.replace('-', '_').split('_')))
     ch_mult: tuple = None       # [automatically set; don't specify this] = tuple(map(int, args.ch.replace('-', '_').split('_')))

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .basic_vae import Decoder, Encoder
+from .basic_vae import Decoder, Encoder, Normalize
 from .quant import VectorQuantizer2
 
 
@@ -51,21 +51,32 @@ class VQVAE_WAV(nn.Module):
         # ddconfig is copied from https://github.com/CompVis/latent-diffusion/blob/e66308c7f2e64cb581c6d27ab6fbeb846828253b/models/first_stage_models/vq-f16/config.yaml
         ddconfig = dict(
             dropout=dropout, ch=ch, z_channels=z_channels,
-            in_channels=in_channels, ch_mult=ch_mult, num_res_blocks=2,   # from vq-f16/config.yaml above
+            in_channels=3, ch_mult=ch_mult, num_res_blocks=2,   # from vq-f16/config.yaml above
             using_sa=True, using_mid_sa=True,                             # from vq-f16/config.yaml above
         )
         ddconfig.pop('double_z', None) # only KL-VAE should use double_z=True
 
-        self.downsample_wav = DownsampleWav(in_channels=9, out_channels=36) # (9, 128, 128) -> (36, 64, 64)
-        self.upsample_wav = UpsampleWav(in_channels=36, out_channels=9) # (36, 64, 64) -> (9, 128, 128)
-        
+        # encoding
+        self.downsample_h1 = DownsampleWav(in_channels=3, out_channels=12) # (3, 128, 128) -> (12, 64, 64)
+        self.conv_in_h1 = torch.nn.Conv2d(12, ch, kernel_size=3, stride=1, padding=1)
+        self.conv_in_h2 = torch.nn.Conv2d(3, ch, kernel_size=3, stride=1, padding=1)
+        self.conv_in_l2 = torch.nn.Conv2d(3, ch, kernel_size=3, stride=1, padding=1)
         self.encoder = Encoder(double_z=False, **ddconfig)
+        
+        # decoding
+        self.upsample_h1 = UpsampleWav(in_channels=12, out_channels=3) # (12, 64, 64) -> (3, 128, 128)
+        self.norm_out_h1 = Normalize(ch)
+        self.conv_out_h1 = torch.nn.Conv2d(ch, 12, kernel_size=3, stride=1, padding=1)
+        self.norm_out_h2 = Normalize(ch)
+        self.conv_out_h2 = torch.nn.Conv2d(ch, 3, kernel_size=3, stride=1, padding=1)
+        self.norm_out_l2 = Normalize(ch)
+        self.conv_out_l2 = torch.nn.Conv2d(ch, 3, kernel_size=3, stride=1, padding=1)
         self.decoder = Decoder(**ddconfig)
         
         self.vocab_size = vocab_size
         self.downsample = 2 ** (len(ddconfig['ch_mult'])-1)
         self.quantize: VectorQuantizer2 = VectorQuantizer2(
-            vocab_size=vocab_size, Cvae=self.Cvae, using_znorm=using_znorm, beta=beta,
+            vocab_size=vocab_size, Cvae=self.Cvae*7, using_znorm=using_znorm, beta=beta,
             default_qresi_counts=default_qresi_counts, v_patch_nums=v_patch_nums, quant_resi=quant_resi, share_quant_resi=share_quant_resi,
         )
         self.quant_conv = torch.nn.Conv2d(self.Cvae, self.Cvae, quant_conv_ks, stride=1, padding=quant_conv_ks//2)
@@ -76,18 +87,31 @@ class VQVAE_WAV(nn.Module):
             [p.requires_grad_(False) for p in self.parameters()]
     
     # ===================== `forward` is only used in VAE training =====================
-    def forward(self, yh1, yh2, yl, ret_usages=False):   # -> rec_B3HW, idx_N, loss
-        yh1_ = self.downsample_wav(yh1) 
-        inp = torch.cat([yh1_, yh2, yl], dim=1)
+    def forward(self, h1, h2, ll2, ret_usages=False):   # -> rec_B3HW, idx_N, loss
+        # (batch_size, ch, 64, 64)
+        inp = [self.conv_in_h1(self.downsample_h1(h1[:, i])) for i in range(3)]
+        inp += [self.conv_in_h2(h2[:, i]) for i in range(3)]
+        inp += [self.conv_in_l2(ll2)]
+        # print(f'[SHAPE] Input: {inp[0].shape}')
+
+        # (batch_size, Cvae, 64, 64)
+        out = [self.quant_conv(self.encoder(x)) for x in inp]
+
         VectorQuantizer2.forward
-        f = self.encoder(inp)
-        # print(f'[SHAPE] Input: {inp.shape}')
-        # print(f'[SHAPE] Encoder features: {f.shape}')
-        f_hat, usages, vq_loss = self.quantize(self.quant_conv(f), ret_usages=ret_usages)
-        rec_inp = self.decoder(self.post_quant_conv(f_hat))
-        rec_yh1_, rec_yh2, rec_yl = rec_inp[:, :36, :, :], rec_inp[:, 36:45, :, :], rec_inp[:, 45:, :, :]
-        rec_yh1 = self.upsample_wav(rec_yh1_)
-        return rec_yh1, rec_yh2, rec_yl, yh1_, rec_yh1_, usages, f, vq_loss
+        f = torch.cat(out, dim=1) # -> (batch_size, Cvae * 7, 64, 64)
+        f_hat, usages, vq_loss = self.quantize(f, ret_usages=ret_usages)
+        # print(f'[SHAPE] Latent: {f.shape}')
+        
+        # (batch_size, ch, 64, 64)
+        rec_inp = [self.decoder(self.post_quant_conv(f_hat[:, i * self.Cvae : (i + 1) * self.Cvae])) for i in range(7)]
+        
+        rec_h1 = [self.upsample_h1(self.conv_out_h1(F.silu(self.norm_out_h1(rec_inp[i]), inplace=True))) for i in range(3)]
+        rec_h2 = [self.conv_out_h2(F.silu(self.norm_out_h2(rec_inp[i]), inplace=True)) for i in range(3, 6)]
+        rec_ll2 = self.conv_out_l2(F.silu(self.norm_out_l2(rec_inp[6]), inplace=True))
+
+        rec_h1 = torch.stack(rec_h1, dim=1)
+        rec_h2 = torch.stack(rec_h2, dim=1)
+        return rec_h1, rec_h2, rec_ll2, usages, vq_loss
     # ===================== `forward` is only used in VAE training =====================
     
     def fhat_to_img(self, f_hat: torch.Tensor):

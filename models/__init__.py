@@ -61,13 +61,9 @@ def build_vae(
     
     # init weights
     need_init = [
-        vae.encoder,
-        vae.decoder,
-        vae.quant_conv,
-        vae.quantize,
-        vae.post_quant_conv,
-        vae.downsample_wav,
-        vae.upsample_wav
+        vae.encoder, vae.upsample_h1, vae.conv_in_h1, vae.conv_in_h2, vae.conv_in_l2,
+        vae.decoder, vae.downsample_h1, vae.conv_out_h1, vae.conv_out_h2, vae.conv_out_l2,
+        vae.quant_conv, vae.quantize, vae.post_quant_conv
     ]
 
     for vv in need_init:

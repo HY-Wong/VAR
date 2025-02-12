@@ -55,37 +55,33 @@ if __name__ == '__main__':
     with torch.no_grad():
         for imgs, _ in tqdm(image_test_loader, desc='Processing images', leave=True):
             imgs = imgs.to(device)
-            yl, (yh1, yh2) = dwt(imgs)
-            yh1 = yh1.view(yh1.shape[0], -1, yh1.shape[3], yh1.shape[4]) # -> (N, C * 3, H, W)
-            yh2 = yh2.view(yh2.shape[0], -1, yh2.shape[3], yh2.shape[4]) # -> (N, C * 3, H, W)
-            yh1_norm, yh2_norm, yl_norm = yh1 / 2, yh2 / 4,  yl / 4 # normalization
+            ll2, (h1, h2) = dwt(imgs)
+            h1, h2, ll2 = h1 / 2, h2 / 4, ll2 / 4 # normalization
             
-            print_wavelet_info('LL', yl_norm)
+            print_wavelet_info('LL', ll2)
             print('Level 1 - Detail Coefficients:')
-            print_wavelet_info('  LH (Hori.)', yh1_norm[:, 0:3])
-            print_wavelet_info('  HL (Vert.)', yh1_norm[:, 3:6])
-            print_wavelet_info('  HH (Diag.)', yh1_norm[:, 6:9])
+            print_wavelet_info('  LH (Hori.)', h1[:, 0])
+            print_wavelet_info('  HL (Vert.)', h1[:, 1])
+            print_wavelet_info('  HH (Diag.)', h1[:, 2])
             print('Level 2 - Detail Coefficients:')
-            print_wavelet_info('  LH (Hori.)', yh2_norm[:, 0:3])
-            print_wavelet_info('  HL (Vert.)', yh2_norm[:, 3:6])
-            print_wavelet_info('  HH (Diag.)', yh2_norm[:, 6:9])
-            
-            rec_yh1_norm, rec_yh2_norm, rec_yl_norm, _, _, usages, f, vq_loss = vae(yh1_norm, yh2_norm, yl_norm)
+            print_wavelet_info('  LH (Hori.)', h2[:, 0])
+            print_wavelet_info('  HL (Vert.)', h2[:, 1])
+            print_wavelet_info('  HH (Diag.)', h2[:, 2])
 
-            print_wavelet_info('Reconstructed LL', rec_yl_norm)
+            rec_h1, rec_h2, rec_ll2, usages, vq_loss = vae(h1, h2, ll2)
+
+            print_wavelet_info('Reconstructed LL', rec_ll2)
             print('Level 1 - Reconstructed Detail Coefficients:')
-            print_wavelet_info('  LH (Hori.)', rec_yh1_norm[:, 0:3])
-            print_wavelet_info('  HL (Vert.)', rec_yh1_norm[:, 3:6])
-            print_wavelet_info('  HH (Diag.)', rec_yh1_norm[:, 6:9])
+            print_wavelet_info('  LH (Hori.)', rec_h1[:, 0])
+            print_wavelet_info('  HL (Vert.)', rec_h1[:, 1])
+            print_wavelet_info('  HH (Diag.)', rec_h1[:, 2])
             print('Level 2 - Reconstructed Detail Coefficients:')
-            print_wavelet_info('  LH (Hori.)', rec_yh2_norm[:, 0:3])
-            print_wavelet_info('  HL (Vert.)', rec_yh2_norm[:, 3:6])
-            print_wavelet_info('  HH (Diag.)', rec_yh2_norm[:, 6:9])
+            print_wavelet_info('  LH (Hori.)', rec_h2[:, 0])
+            print_wavelet_info('  HL (Vert.)', rec_h2[:, 1])
+            print_wavelet_info('  HH (Diag.)', rec_h2[:, 0])
             
-            rec_yh1, rec_yh2, rec_yl = rec_yh1_norm * 2, rec_yh2_norm * 4,  rec_yl_norm * 4 # denormalization
-            rec_yh1 = rec_yh1.view(rec_yh1.shape[0], 3, 3, rec_yh1.shape[2], rec_yh1.shape[3]) # -> (N, C, 3, H, W)
-            rec_yh2 = rec_yh2.view(rec_yh2.shape[0], 3, 3, rec_yh2.shape[2], rec_yh2.shape[3]) # -> (N, C, 3, H, W)
-            rec_imgs = idwt((rec_yl, [rec_yh1, rec_yh2]))
+            rec_h1, rec_h2, rec_ll2 = rec_h1 * 2, rec_h2 * 4,  rec_ll2 * 4 # denormalization
+            rec_imgs = idwt((rec_ll2, [rec_h1, rec_h2]))
             
             # reconstruction loss
             l2_loss = nn.MSELoss(reduction='mean')
@@ -95,7 +91,7 @@ if __name__ == '__main__':
             # print(f'[INFO] Wavelet reconstruction loss: {l2_loss(wav_imgs, imgs).item()}')
 
             if first_batch:
-                indices = list(range(0, 4)) + list(range(50, 54)) + list(range(100, 104)) + list(range(150, 154))
+                indices = list(range(0, 4)) + list(range(50, 54)) # + list(range(100, 104)) + list(range(150, 154))
                 rec_imgs = rec_imgs[indices]
                 
                 rec_imgs = torch.clamp((rec_imgs + 1) / 2, min=0, max=1)
