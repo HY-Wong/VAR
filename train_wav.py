@@ -52,7 +52,7 @@ if __name__ == '__main__':
     # build the model
     vae = build_vae(
         patch_nums=args.patch_nums,
-        V=4096, Cvae=args.Cvae, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+        V=4096, Cvae=args.Cvae, ch=128, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         init_vae=args.init_vae, init_vocab=args.init_vocab,
         ch_mult=args.ch_mult, in_channels=args.in_channels
     )
@@ -70,7 +70,7 @@ if __name__ == '__main__':
         dirpath=save_ckpt_dir, 
         filename='{epoch:03d}', 
         save_last=True, # save the latest
-        save_top_k=1, monitor='val_vae_rec_loss',  mode='min', # save the best based on val_rec_loss
+        save_top_k=1, monitor='val_vae_rec_wav_loss',  mode='min', # save the best based on vae_rec_wav_loss
         every_n_epochs=args.save_every_n_epochs
     )
     callbacks = [LearningRateMonitor(logging_interval='step'), checkpoint_callback]
@@ -81,7 +81,7 @@ if __name__ == '__main__':
         precision='32', deterministic=True,
         callbacks=callbacks, logger=logger,
         strategy=DDPStrategy(find_unused_parameters=True),
-        max_epochs=args.ep
+        max_epochs=args.max_ep
     )
 
     # train the model

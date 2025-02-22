@@ -1,5 +1,4 @@
 # https://github.com/CompVis/taming-transformers/blob/master/taming/modules/losses/vqperceptual.py
-# https://github.com/zacheberhart/Maximum-Mean-Discrepancy-Variational-Autoencoder/blob/master/MMD-VAE%20(InfoVAE).ipynb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,22 +32,6 @@ def focal_freq_loss(inp, rec_inp, alpha=1):
     return loss.mean()
 
 
-def compute_kernel(x, y):
-    dim = x.size(1)
-    kernel_input = ((x[:, None, :] - y[None, :, :]) ** 2).mean(dim=2) / dim
-    return torch.exp(-kernel_input) # (x_size, y_size)
-
-
-def mmd_loss(f):
-    f = f.view(f.shape[0], -1)
-    true_f = torch.randn_like(f, requires_grad=False) # match size and device
-    x_kernel = compute_kernel(true_f, true_f)
-    y_kernel = compute_kernel(f, f)
-    xy_kernel = compute_kernel(true_f, f)
-    loss = x_kernel.mean() + y_kernel.mean() - 2 * xy_kernel.mean()
-    return loss
-
-
 class Loss(nn.Module):
     def __init__(self, args, steps_per_epoch):
         super().__init__()
@@ -59,16 +42,11 @@ class Loss(nn.Module):
         print(f'[INFO] Using discriminator loss: {args.disc_loss_fn}')
 
         # reconstruction loss
-        if args.rec_loss_fn == 'l1':
-            self.rec_loss_fn = nn.L1Loss(reduction='mean')
-        elif args.rec_loss_fn == 'l2':
-            self.rec_loss_fn = nn.MSELoss(reduction='mean') 
-        elif args.rec_loss_fn == 'focal':
-            self.rec_loss_fn = focal_freq_loss
+        self.rec_l1 = nn.L1Loss(reduction='mean')
+        self.rec_l2 = nn.MSELoss(reduction='mean')
+        self.rec_focal = focal_freq_loss
         # perceptual loss
         self.lpips = LPIPS('vgg16_lpips.pth').eval()
-        # maximum-mean-discrepancy loss
-        self.mmd_loss_fn = mmd_loss
         # adversarial loss
         if args.disc_loss_fn == 'hinge':
             self.discriminator = DiscriminatorHL(
@@ -97,38 +75,50 @@ class Loss(nn.Module):
         ):
         # VAE
         if optimizer_idx == 0:
-            rec_loss = self.rec_loss_fn(h1, rec_h1) + self.rec_loss_fn(h2, rec_h2) + self.rec_loss_fn(ll2, rec_ll2)
-            # perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
+            if h1 is not None:
+                rec_wav_loss = self.args.lh * (self.rec_focal(h1, rec_h1) + self.rec_focal(h2, rec_h2)) + self.rec_focal(ll2, rec_ll2)
+                rec_img_loss = self.rec_l1(imgs, rec_imgs)
+                rec_loss = rec_wav_loss + self.args.li * rec_img_loss
+                vae_log_dict = {
+                    f"{split}_vae_rec_img_loss": self.args.li * rec_img_loss.detach(),
+                    f"{split}_vae_rec_wav_loss": rec_wav_loss.detach(),
+                }
+            else:
+                rec_loss = 0.2 * self.rec_l1(imgs, rec_imgs) + self.rec_l2(imgs, rec_imgs)
+                vae_log_dict = {
+                    f"{split}_vae_rec_img_loss": rec_loss.detach(),
+                }
+            
+            perc_loss = torch.mean(self.lpips(imgs, rec_imgs))
             # up_ll2 = F.interpolate(ll2, size=(256, 256), mode='bilinear', align_corners=False)
             # up_rec_ll2 = F.interpolate(rec_ll2, size=(256, 256), mode='bilinear', align_corners=False)
             # perc_loss = torch.mean(self.lpips(up_ll2, up_rec_ll2))
             
-            # logits_fake = self.discriminator(rec_imgs)
-            # if self.args.disc_loss_fn == 'hinge':
-            #     disc_loss = -torch.mean(logits_fake)
-            # elif self.args.disc_loss_fn == 'cross_entropy':
-            #     labels_real = torch.ones(logits_fake.shape[0], dtype=torch.float, device=logits_fake.device).unsqueeze(1)
-            #     disc_loss = F.binary_cross_entropy_with_logits(logits_fake, labels_real)
+            logits_fake = self.discriminator(rec_imgs)
+            if self.args.disc_loss_fn == 'hinge':
+                disc_loss = -torch.mean(logits_fake)
+            elif self.args.disc_loss_fn == 'cross_entropy':
+                labels_real = torch.ones(logits_fake.shape[0], dtype=torch.float, device=logits_fake.device).unsqueeze(1)
+                disc_loss = F.binary_cross_entropy_with_logits(logits_fake, labels_real)
             
-            # try:
-            #     weight = self.calculate_adaptive_weight(rec_loss, disc_loss, last_layer=last_layer)
-            # except RuntimeError:
-            #     assert not self.training
-            #     weight = 1.0
-            # if self.disc_start_step > global_step:
-            #     disc_loss *= 0.0
+            try:
+                weight = self.calculate_adaptive_weight(rec_loss, disc_loss, last_layer=last_layer)
+            except RuntimeError:
+                assert not self.training
+                weight = 1.0
+            if self.disc_start_step > global_step:
+                disc_loss *= 0.0
             
             # compound loss
-            vae_loss = rec_loss + self.args.lc * vq_loss # + self.args.lp * perc_loss # + weight * self.args.ld * disc_loss
+            ####
+            vae_loss = rec_loss + self.args.lc * vq_loss + self.args.lp * perc_loss + self.args.ld * disc_loss # weight * self.args.ld * disc_loss
             
-            vae_log_dict = {
-                f'{split}_vae_loss': vae_loss.clone().detach(),
-                f'{split}_vae_rec_loss': rec_loss.detach(),
-                f'{split}_vae_vq_loss': self.args.lc * vq_loss.detach(),
-                # f'{split}_vae_perc_loss': self.args.lp * perc_loss.detach(),
-                # f'{split}_vae_disc_loss': self.args.ld * disc_loss.detach(),
-                # f'{split}_vae_disc_weight': weight
-            }
+            ####
+            vae_log_dict[f"{split}_vae_loss"] = vae_loss.clone().detach()
+            vae_log_dict[f"{split}_vae_vq_loss"] = self.args.lc * vq_loss.detach()
+            vae_log_dict[f"{split}_vae_perc_loss"] = self.args.lp * perc_loss.detach()
+            vae_log_dict[f"{split}_vae_disc_loss"] = self.args.ld * disc_loss.detach()
+            vae_log_dict[f"{split}_vae_disc_weight"] = weight
             return vae_loss, vae_log_dict
 
         # Discriminator

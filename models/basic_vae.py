@@ -111,7 +111,7 @@ class Encoder(nn.Module):
         self.in_channels = in_channels
         
         # downsampling
-        # self.conv_in = torch.nn.Conv2d(in_channels, self.ch, kernel_size=3, stride=1, padding=1)
+        self.conv_in = torch.nn.Conv2d(in_channels, self.ch, kernel_size=3, stride=1, padding=1)
         
         in_ch_mult = (1,) + tuple(ch_mult)
         self.down = nn.ModuleList()
@@ -144,21 +144,26 @@ class Encoder(nn.Module):
     
     def forward(self, x):
         # downsampling
-        # h = self.conv_in(x)
-        h = x
+        h = self.conv_in(x)
+        assert not torch.isnan(h).any(), "NaN after conv_in!"
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
                 h = self.down[i_level].block[i_block](h)
+                assert not torch.isnan(h).any(), f"NaN after down block {i_level}_{i_block}!"
                 if len(self.down[i_level].attn) > 0:
                     h = self.down[i_level].attn[i_block](h)
+                    assert not torch.isnan(h).any(), f"NaN after attn block {i_level}_{i_block}!"
             if i_level != self.num_resolutions - 1:
                 h = self.down[i_level].downsample(h)
+                assert not torch.isnan(h).any(), f"NaN after down block {i_level}!"
         
         # middle
         h = self.mid.block_2(self.mid.attn_1(self.mid.block_1(h)))
+        assert not torch.isnan(h).any(), f"NaN after mid block!"
         
         # end
         h = self.conv_out(F.silu(self.norm_out(h), inplace=True))
+        assert not torch.isnan(h).any(), f"NaN after conv_out!"
         return h
 
 
@@ -206,8 +211,8 @@ class Decoder(nn.Module):
             self.up.insert(0, up)  # prepend to get consistent order
         
         # end
-        # self.norm_out = Normalize(block_in)
-        # self.conv_out = torch.nn.Conv2d(block_in, in_channels, kernel_size=3, stride=1, padding=1)
+        self.norm_out = Normalize(block_in)
+        self.conv_out = torch.nn.Conv2d(block_in, in_channels, kernel_size=3, stride=1, padding=1)
     
     def forward(self, z):
         # z to block_in
@@ -224,5 +229,5 @@ class Decoder(nn.Module):
                 h = self.up[i_level].upsample(h)
         
         # end
-        # h = self.conv_out(F.silu(self.norm_out(h), inplace=True))
+        h = self.conv_out(F.silu(self.norm_out(h), inplace=True))
         return h

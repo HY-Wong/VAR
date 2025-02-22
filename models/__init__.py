@@ -26,7 +26,7 @@ def build_vae_var(
     
     # build models
     # vae_local = VQVAE(vocab_size=V, z_channels=Cvae, ch=ch, test_mode=True, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums).to(device)
-    vae_local = VQVAE(vocab_size=V, z_channels=Cvae, ch=ch, test_mode=False, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums).to(device)
+    vae_local = VQVAE(vocab_size=V, z_channels=Cvae, ch=ch, test_mode=False, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums)
     var_wo_ddp = VAR(
         vae_local=vae_local,
         num_classes=num_classes, depth=depth, embed_dim=width, num_heads=heads, drop_rate=0., attn_drop_rate=0., drop_path_rate=dpr,
@@ -34,7 +34,27 @@ def build_vae_var(
         attn_l2_norm=attn_l2_norm,
         patch_nums=patch_nums,
         flash_if_available=flash_if_available, fused_if_available=fused_if_available,
-    ).to(device)
+    )
+    if device is not None:
+        vae_local = vae_local.to(device)
+        var_wo_ddp = var_wo_ddp.to(device)
+
+    # init weights
+    init_vae = -0.5
+    init_vocab = -1
+    
+    need_init = [
+        vae_local.encoder,
+        vae_local.decoder,
+        vae_local.quant_conv, 
+        vae_local.quantize, 
+        vae_local.post_quant_conv
+    ]
+
+    for vv in need_init:
+        init_weights(vv, init_vae)
+    vae_local.quantize.eini(init_vocab)
+    
     var_wo_ddp.init_weights(init_adaln=init_adaln, init_adaln_gamma=init_adaln_gamma, init_head=init_head, init_std=init_std)
     
     return vae_local, var_wo_ddp
@@ -44,9 +64,9 @@ def build_vae(
     # Shared args
     patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),   # 10 steps by default
     # VQVAE args
-    V=4096, Cvae=32, ch=160, share_quant_resi=4,
+    V=4096, Cvae=32, ch=128, share_quant_resi=4,
     init_vae=-0.5, init_vocab=-1,
-    ch_mult=(1, 2, 4), in_channels=48
+    ch_mult=(1, 2, 4), in_channels=12
 ) -> VQVAE_WAV:
     # disable built-in initialization for speed
     for clz in (nn.Linear, nn.LayerNorm, nn.BatchNorm2d, nn.SyncBatchNorm, nn.Conv1d, nn.Conv2d, nn.ConvTranspose1d, nn.ConvTranspose2d):
@@ -61,9 +81,13 @@ def build_vae(
     
     # init weights
     need_init = [
-        vae.encoder, vae.upsample_h1, vae.conv_in_h1, vae.conv_in_h2, vae.conv_in_l2,
-        vae.decoder, vae.downsample_h1, vae.conv_out_h1, vae.conv_out_h2, vae.conv_out_l2,
-        vae.quant_conv, vae.quantize, vae.post_quant_conv
+        vae.upsample_h1,
+        vae.encoder,
+        vae.downsample_h1,
+        vae.decoder,
+        vae.quant_conv, 
+        vae.quantize, 
+        vae.post_quant_conv
     ]
 
     for vv in need_init:

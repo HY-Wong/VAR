@@ -25,13 +25,13 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
     
     def forward(self, imgs):
         ll2, (h1, h2) = self.dwt(imgs)
-        h1, h2, ll2 = h1 / 2, h2 / 4, ll2 / 4 # normalization
+        h1_norm, h2_norm, ll2_norm = h1 / 2, h2 / 4, ll2 / 4 # normalization
             
-        rec_h1, rec_h2, rec_ll2, usages, vq_loss = self.vae(h1, h2, ll2)
+        rec_h1_norm, rec_h2_norm, rec_ll2_norm, usages, vq_loss = self.vae(h1_norm, h2_norm, ll2_norm)
 
-        rec_h1, rec_h2, rec_ll2 = rec_h1 * 2, rec_h2 * 4,  rec_ll2 * 4 # denormalization
+        rec_h1, rec_h2, rec_ll2 = rec_h1_norm * 2, rec_h2_norm * 4, rec_ll2_norm * 4 # denormalization
         rec_imgs = self.idwt((rec_ll2, [rec_h1, rec_h2]))
-        return h1, h2, ll2, rec_h1, rec_h2, rec_ll2, rec_imgs, usages, vq_loss
+        return h1_norm, h2_norm, ll2_norm, rec_h1_norm, rec_h2_norm, rec_ll2_norm, rec_imgs, usages, vq_loss
 
     def training_step(self, batch, batch_idx):
         imgs, labels = batch
@@ -43,7 +43,7 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # adjust global step to match LR scheduler step: two optimizers -> two steps per iteration
         vae_loss, vae_log_dict = self.loss(
             imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
-            vq_loss, 0, None, self.global_step//2+1, 'train'
+            vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
         )
         
         vae_opt.zero_grad()
@@ -55,7 +55,7 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # optimize Discriminator
         disc_loss, disc_log_dict = self.loss(
             imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
-            vq_loss, 1, None, self.global_step//2+1, 'train'
+            vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'train'
         )
         
         disc_opt.zero_grad()
@@ -82,13 +82,13 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # VAE
         _, vae_log_dict = self.loss(
             imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
-            vq_loss, 0, None, self.global_step//2+1, 'val'
+            vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
         )
         
         # Discriminator
         _, disc_log_dict = self.loss(
             imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
-            vq_loss, 1, None, self.global_step//2+1, 'val'
+            vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'val'
         )
         
         # log
@@ -119,13 +119,13 @@ class VQVAE_WAV_Trainer(pl.LightningModule):
         # VAE
         _, vae_log_dict = self.loss(
             imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
-            vq_loss, 0, None, self.global_step//2+1, 'test'
+            vq_loss, 0, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
         )
 
         # Discriminator
         _, disc_log_dict = self.loss(
             imgs, h1, h2, ll2, rec_imgs, rec_h1, rec_h2, rec_ll2,
-            vq_loss, 1, None, self.global_step//2+1, 'test'
+            vq_loss, 1, self.vae.decoder.conv_out.weight, self.global_step//2+1, 'test'
         ) 
         
         # log

@@ -56,6 +56,7 @@ class VQVAE(nn.Module):
     def forward(self, inp, ret_usages=False):   # -> rec_B3HW, idx_N, loss
         VectorQuantizer2.forward
         f_hat, usages, vq_loss = self.quantize(self.quant_conv(self.encoder(inp)), ret_usages=ret_usages)
+        assert not torch.isnan(f_hat).any(), f"NaN f_hat!"
         return self.decoder(self.post_quant_conv(f_hat)), usages, vq_loss
     # ===================== `forward` is only used in VAE training =====================
     

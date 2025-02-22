@@ -30,7 +30,7 @@ if __name__ == '__main__':
     # build the model
     vae = build_vae(
         patch_nums=args.patch_nums,
-        V=4096, Cvae=args.Cvae, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+        V=4096, Cvae=args.Cvae, ch=128, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
         init_vae=args.init_vae, init_vocab=args.init_vocab,
         ch_mult=args.ch_mult, in_channels=args.in_channels
     ).to(device)
@@ -91,7 +91,7 @@ if __name__ == '__main__':
             # print(f'[INFO] Wavelet reconstruction loss: {l2_loss(wav_imgs, imgs).item()}')
 
             if first_batch:
-                indices = list(range(0, 4)) + list(range(50, 54)) # + list(range(100, 104)) + list(range(150, 154))
+                indices = list(range(0, 4)) + list(range(50, 54)) + list(range(100, 104)) + list(range(150, 154))
                 rec_imgs = rec_imgs[indices]
                 
                 rec_imgs = torch.clamp((rec_imgs + 1) / 2, min=0, max=1)

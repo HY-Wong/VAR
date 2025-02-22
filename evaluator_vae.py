@@ -8,7 +8,7 @@ from PIL import Image
 
 from models import build_vae_var
 from utils import arg_util
-from utils.data_wav import ImageDataModule
+from utils.data import ImageDataModule
 
 
 def normalize_01_into_pn1(x):
@@ -41,7 +41,7 @@ if __name__ == '__main__':
 
     # data loading
     train_aug, val_aug = get_train_and_val_aug()
-    image_data_module = ImageDataModule(args, '../datasets/imagenet-100', train_aug, val_aug)
+    image_data_module = ImageDataModule(args)
     image_test_loader = image_data_module.test_dataloader()
 
     # build the model
@@ -52,8 +52,8 @@ if __name__ == '__main__':
         flash_if_available=args.fuse, fused_if_available=args.fuse,
         init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
     )
-    vae_ckpt = 'vae_ch160v4096z32.pth'
-    vae.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
+    vae_ckpt = args.load_ckpt_path
+    # vae.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
     total_params = sum(p.numel() for p in vae.parameters() if p.requires_grad)
     print(f'[INFO] Number of trainable parameters {total_params}')
     
@@ -76,8 +76,8 @@ if __name__ == '__main__':
             total_images += imgs.shape[0]
 
             if first_batch:
-                indices = list(range(0, 4)) + list(range(50, 54)) + list(range(100, 104)) + list(range(150, 154))
-                rec_imgs = rec_imgs[indices]
+                # indices = list(range(0, 4)) + list(range(50, 54)) + list(range(100, 104)) + list(range(150, 154))
+                # rec_imgs = rec_imgs[indices]
 
                 rec_imgs = torchvision.utils.make_grid(rec_imgs, nrow=8, padding=0)
                 rec_imgs = torch.clamp((rec_imgs + 1) / 2, min=0, max=1)
