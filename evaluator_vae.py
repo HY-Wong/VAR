@@ -47,13 +47,18 @@ if __name__ == '__main__':
     # build the model
     vae, _ = build_vae_var(
         device=device, patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
-        V=4096, Cvae=32, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+        V=4096, Cvae=32, ch=160, share_quant_resi=4, test_mode=False,   # hard-coded VQVAE hyperparameters
         num_classes=100, depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
         flash_if_available=args.fuse, fused_if_available=args.fuse,
         init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
     )
     vae_ckpt = args.load_ckpt_path
-    # vae.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
+    if vae_ckpt:
+        # load from Lightning’s checkpoint
+        ckpt = torch.load(args.load_ckpt_path, map_location='cpu', weights_only=False)
+        state_dict = {k.replace('vae.', ''): v for k, v in ckpt['state_dict'].items() if k.startswith('vae.')}
+        vae.load_state_dict(state_dict, strict=True)
+        
     total_params = sum(p.numel() for p in vae.parameters() if p.requires_grad)
     print(f'[INFO] Number of trainable parameters {total_params}')
     
@@ -75,7 +80,7 @@ if __name__ == '__main__':
             total_rec_loss += rec_loss.item() * imgs.shape[0]
             total_images += imgs.shape[0]
 
-            if first_batch:
+            if first_batch
                 # indices = list(range(0, 4)) + list(range(50, 54)) + list(range(100, 104)) + list(range(150, 154))
                 # rec_imgs = rec_imgs[indices]
 

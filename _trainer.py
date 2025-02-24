@@ -104,6 +104,7 @@ class VARTrainer(object):
         
         gt_idx_Bl: List[ITen] = self.vae_local.img_to_idxBl(inp_B3HW)
         gt_BL = torch.cat(gt_idx_Bl, dim=1)
+        print(f'[INFO] gt_BL {gt_BL.shape}, {gt_BL.max()}, {gt_BL.min()}')
         x_BLCv_wo_first_l: Ten = self.quantize_local.idxBl_to_var_input(gt_idx_Bl)
         
         with self.var_opt.amp_ctx:

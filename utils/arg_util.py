@@ -33,9 +33,10 @@ class Args(Tap):
     init_vocab: float = -1  # <0: uniform(-abs(init)*base, abs(init)*base), where base = 20/vocab_size; >0: trunc_normal_(std=init)
     # VAE optimization
     lc: float = 1.0             # weight of the commitment loss
+    li: float = 0.0             ####
+    lh: float = 1.0             ####
     lp: float = 0.1             # weight of the perceptual loss
-    lm: float = 10000.0         # weight of the maximum-mean-discrepancy loss
-    ld: float = 1.0             # weight of the adversarial loss
+    ld: float = 0.4             # weight of the adversarial loss
     rec_loss_fn: str = 'l1'     # L1 loss, L2 loss or focal frequency loss
 
     vae_blr: float = 1e-4       # base lr
@@ -46,7 +47,7 @@ class Args(Tap):
 
     vae_wp_ep: int = None       # lr warmup epochs: set to round(ep * 0.01) by default
     vae_wp_lr: float = 0.005    # lr warmup ratio: initial lr = lr * vae_wp_lr
-    vae_final_lr: float = 0.01  # lr schedule ratio: final lr = lr * vae_final_lr
+    vae_final_lr: float = 0.3   # lr schedule ratio: final lr = lr * vae_final_lr
 
     # Discriminator
     n_layers: int = 3           # n-layered discriminator
@@ -84,7 +85,8 @@ class Args(Tap):
     glb_batch_size: int = 0 # [automatically set; don't specify this] global batch size = args.batch_size * dist.get_world_size()
     ac: int = 1             # gradient accumulation
     
-    ep: int = 150
+    ep: int = 250
+    max_ep: int = None
     wp: float = 0
     wp0: float = 0.005      # initial lr ratio at the beginning of lr warm up
     wpe: float = 0.01       # final lr ratio at the end of training
@@ -102,7 +104,7 @@ class Args(Tap):
     pn: str = '1_2_3_4_5_6_8_10_13_16'
     patch_size: int = 16
     ch: str = '1_2_4'
-    in_channels: int = 48       # num of input channels after concatenating coefficient inputs
+    in_channels: int = 12       # num of input channels after concatenating coefficient inputs
     Cvae: int = 32              # num of latent channels
     wavelet: str = 'haar'       # type of wavelet transform used
     patch_nums: tuple = None    # [automatically set; don't specify this] = tuple(map(int, args.pn.replace('-', '_').split('_')))
@@ -112,7 +114,7 @@ class Args(Tap):
     data_load_reso: int = None  # [automatically set; don't specify this] would be max(patch_nums) * patch_size
     mid_reso: float = 1.125     # aug: first resize to mid_reso = 1.125 * data_load_reso, then crop to data_load_reso
     hflip: bool = False         # augmentation: horizontal flip
-    workers: int = 16           # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
+    workers: int = 8            # num workers; 0: auto, -1: don't use multiprocessing in DataLoader
     
     # progressive training
     pg: float = 0.0         # >0 for use progressive training during [0%, this] of training
@@ -302,14 +304,22 @@ def init_dist_and_get_args():
     args.data_load_reso = max(args.resos)
     
     # update args: bs and lr
+    # VAE
     args.batch_size = args.bs // (args.num_nodes * args.gpus)
     args.workers = min(max(0, args.workers), args.batch_size)
     
     args.vae_lr = args.ac * args.vae_blr * args.batch_size / 256
     args.disc_lr = args.ac * args.disc_blr * args.batch_size / 256
+    
+    # VAR
+    bs_per_gpu = round(args.bs / args.ac / dist.get_world_size())
+    args.glb_batch_size = bs_per_gpu * dist.get_world_size()
+
     args.tlr = args.ac * args.tblr * args.batch_size / 256
     args.twde = args.twde or args.twd
     
+    if args.max_ep is None:
+        args.max_ep = args.ep
     if args.vae_wp_ep is None:
         args.vae_wp_ep = max(2, round(args.ep * 0.01))
     if args.disc_wp_ep is None:

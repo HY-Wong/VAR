@@ -56,18 +56,20 @@ class VQVAE(nn.Module):
     def forward(self, inp, ret_usages=False):   # -> rec_B3HW, idx_N, loss
         VectorQuantizer2.forward
         f_hat, usages, vq_loss = self.quantize(self.quant_conv(self.encoder(inp)), ret_usages=ret_usages)
-        assert not torch.isnan(f_hat).any(), f"NaN f_hat!"
         return self.decoder(self.post_quant_conv(f_hat)), usages, vq_loss
     # ===================== `forward` is only used in VAE training =====================
     
     def fhat_to_img(self, f_hat: torch.Tensor):
+        print(f'[INFO] called fhat_to_img')
         return self.decoder(self.post_quant_conv(f_hat)).clamp_(-1, 1)
     
     def img_to_idxBl(self, inp_img_no_grad: torch.Tensor, v_patch_nums: Optional[Sequence[Union[int, Tuple[int, int]]]] = None) -> List[torch.LongTensor]:    # return List[Bl]
+        print(f'[INFO] called img_to_idxBl')
         f = self.quant_conv(self.encoder(inp_img_no_grad))
         return self.quantize.f_to_idxBl_or_fhat(f, to_fhat=False, v_patch_nums=v_patch_nums)
     
     def idxBl_to_img(self, ms_idx_Bl: List[torch.Tensor], same_shape: bool, last_one=False) -> Union[List[torch.Tensor], torch.Tensor]:
+        print(f'[INFO] called idxBl_to_img')
         B = ms_idx_Bl[0].shape[0]
         ms_h_BChw = []
         for idx_Bl in ms_idx_Bl:
@@ -77,12 +79,14 @@ class VQVAE(nn.Module):
         return self.embed_to_img(ms_h_BChw=ms_h_BChw, all_to_max_scale=same_shape, last_one=last_one)
     
     def embed_to_img(self, ms_h_BChw: List[torch.Tensor], all_to_max_scale: bool, last_one=False) -> Union[List[torch.Tensor], torch.Tensor]:
+        print(f'[INFO] called embed_to_img')
         if last_one:
             return self.decoder(self.post_quant_conv(self.quantize.embed_to_fhat(ms_h_BChw, all_to_max_scale=all_to_max_scale, last_one=True))).clamp_(-1, 1)
         else:
             return [self.decoder(self.post_quant_conv(f_hat)).clamp_(-1, 1) for f_hat in self.quantize.embed_to_fhat(ms_h_BChw, all_to_max_scale=all_to_max_scale, last_one=False)]
     
     def img_to_reconstructed_img(self, x, v_patch_nums: Optional[Sequence[Union[int, Tuple[int, int]]]] = None, last_one=False) -> List[torch.Tensor]:
+        print(f'[INFO] img_to_reconstructed_img')
         f = self.quant_conv(self.encoder(x))
         ls_f_hat_BChw = self.quantize.f_to_idxBl_or_fhat(f, to_fhat=True, v_patch_nums=v_patch_nums)
         if last_one:

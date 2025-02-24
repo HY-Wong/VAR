@@ -7,7 +7,6 @@ from PIL import Image
 from pytorch_wavelets import DWTForward, DWTInverse
 from tqdm import tqdm
 
-from trainer_wav import VQVAE_WAV_Trainer
 from models import build_vae
 from utils import arg_util
 from utils.data import ImageDataModule
@@ -34,15 +33,16 @@ if __name__ == '__main__':
         init_vae=args.init_vae, init_vocab=args.init_vocab,
         ch_mult=args.ch_mult, in_channels=args.in_channels
     ).to(device)
+    print(vae)
+    exit(0)
 
     vae_ckpt = args.load_ckpt_path
     if vae_ckpt:
-        model = VQVAE_WAV_Trainer.load_from_checkpoint(
-            vae_ckpt, 
-            vae=vae, 
-            args=args, 
-            steps_per_epoch=1
-        )
+        # load from Lightning’s checkpoint
+        ckpt = torch.load(args.load_ckpt_path, map_location='cpu', weights_only=False)
+        state_dict = {k.replace('vae.', ''): v for k, v in ckpt['state_dict'].items() if k.startswith('vae.')}
+        vae.load_state_dict(state_dict, strict=True)
+    
     total_params = sum(p.numel() for p in vae.parameters() if p.requires_grad)
     print(f'[INFO] Number of trainable parameters {total_params}')
     

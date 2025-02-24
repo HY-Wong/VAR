@@ -78,7 +78,7 @@ def build_everything(args: arg_util.Args):
     # build models
     from torch.nn.parallel import DistributedDataParallel as DDP
     from models import VAR, VQVAE, build_vae_var
-    from trainer import VARTrainer
+    from _trainer import VARTrainer
     from utils.amp_sc import AmpOptimizer
     from utils.lr_control import filter_params
     
@@ -96,6 +96,9 @@ def build_everything(args: arg_util.Args):
             os.system(f'wget https://huggingface.co/FoundationVision/var/resolve/main/{vae_ckpt}')
     dist.barrier()
     vae_local.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
+    # ckpt = torch.load(args.load_ckpt_path, map_location='cpu', weights_only=False)
+    # state_dict = {k.replace('vae.', ''): v for k, v in ckpt['state_dict'].items() if k.startswith('vae.')}
+    # vae_local.load_state_dict(state_dict, strict=True)
     
     vae_local: VQVAE = args.compile_model(vae_local, args.vfast)
     var_wo_ddp: VAR = args.compile_model(var_wo_ddp, args.tfast)
@@ -252,7 +255,7 @@ def main_training():
 
 def train_one_ep(ep: int, is_first_ep: bool, start_it: int, args: arg_util.Args, tb_lg: misc.TensorboardLogger, ld_or_itrt, iters_train: int, trainer):
     # import heavy packages after Dataloader object creation
-    from trainer import VARTrainer
+    from _trainer import VARTrainer
     from utils.lr_control import lr_wd_annealing
     trainer: VARTrainer
     
@@ -276,7 +279,7 @@ def train_one_ep(ep: int, is_first_ep: bool, start_it: int, args: arg_util.Args,
         
         inp = inp.to(args.device, non_blocking=True)
         label = label.to(args.device, non_blocking=True)
-        print(inp.shape)
+        
         args.cur_it = f'{it+1}/{iters_train}'
         
         wp_it = args.wp * iters_train

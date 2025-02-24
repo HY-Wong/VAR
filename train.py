@@ -52,12 +52,12 @@ if __name__ == '__main__':
     # build the model
     vae, _ = build_vae_var(
         device=None, patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
-        V=4096, Cvae=32, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
+        V=4096, Cvae=32, ch=160, share_quant_resi=4, test_mode=False,   # hard-coded VQVAE hyperparameters
         num_classes=100, depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
         flash_if_available=args.fuse, fused_if_available=args.fuse,
         init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
     )
-
+    
     if resume:
         model = VQVAE_Trainer.load_from_checkpoint(
             args.load_ckpt_path, vae=vae, args=args, steps_per_epoch=len(train_loader) // gpus
@@ -89,4 +89,5 @@ if __name__ == '__main__':
     trainer.fit(model, data_module, ckpt_path=args.load_ckpt_path)
 
     # test the model
+    # trainer.validate(model, data_module)
     trainer.test(model, data_module)
